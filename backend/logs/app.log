@@ -1,0 +1,4 @@
+03-23 12:31:13.098 | INFO  | Started server process [48657]
+03-23 12:31:13.098 | INFO  | Waiting for application startup.
+03-23 12:31:13.098 | INFO  | app/main.py:21 | Application startup complete
+03-23 12:31:13.098 | INFO  | Application startup complete.
