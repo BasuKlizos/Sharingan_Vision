@@ -10,7 +10,6 @@ htmlcov/
 # This ignores your specific venv and common names
 sharingan_venv/
 venv/
-env/
 .env
 .venv/
 auth_tokens.txt
@@ -49,5 +48,5 @@ build/
 
 backend/logs/*
 !backend/logs/.gitkeep
-backend/app/.env
-.env*
+.env
+
