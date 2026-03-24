@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE@$: true,    # Future-proof Node.js change
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true,    # Future-proof Node.js change
 
 jobs:
   branch-flow-check:
