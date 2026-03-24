@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
@@ -28,13 +29,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Middleware
+# CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], # frontend Origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Log Request Middleware
 app.middleware("http")(log_request_middleware)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/ping")
 async def ping():
+    """
+    Ping endpoint to check if the application is alive.
+
+    Returns:
+        dict: {"message": "pong"}
+    """
     logger.debug("Ping endpoint called")
     redis_client = await redis_manager.get_client()
     return {"message": "pong"}
