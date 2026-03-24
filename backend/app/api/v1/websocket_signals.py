@@ -19,7 +19,32 @@ service = SignalingService(manager)
 
 @router.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str):
+    """
+    WebSocket endpoint for WebRTC signaling.
 
+    Handles:
+    - Connection to a signaling room (interview session)
+    - Exchange of signaling messages:
+        - offer
+        - answer
+        - ice-candidate
+        - join / leave
+    - Message validation and relay between peers
+
+    Args:
+        websocket (WebSocket): Active WebSocket connection
+        room_id (str): Unique identifier for interview session (call_id)
+
+    Notes:
+        - Only 2 participants allowed per room
+        - Candidate sends offer
+        - Interviewer sends answer
+        - ICE candidates exchanged both ways
+
+    Future Enhancements:
+        - Token-based authentication
+        - Role validation via query params
+    """
     try:
         await manager.connect(room_id, websocket)
 
