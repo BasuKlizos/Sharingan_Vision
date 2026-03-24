@@ -3,15 +3,18 @@ from contextlib import asynccontextmanager
 
 from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
+from app.core.redis import redis_manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    logger.info("Application startup complete")
+    logger.info("Connecting to Redis...")
+    await redis_manager.connect()
+
     yield
-    # Shutdown
-    logger.info("Application shutting down")
+
+    logger.info("Disconnecting Redis...")
+    await redis_manager.disconnect()
 
 
 app = FastAPI(
