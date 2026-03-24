@@ -16,6 +16,9 @@ concurrency:
   group: pr-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE@$: true,    # Future-proof Node.js change
+
 jobs:
   branch-flow-check:
     name: branch-flow-check
