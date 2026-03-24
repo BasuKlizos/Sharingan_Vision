@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
 from app.core.redis import redis_manager
+from app.dependencies.redis import get_redis
 
 
 @asynccontextmanager
@@ -34,4 +35,5 @@ app.middleware("http")(log_request_middleware)
 @app.get("/ping")
 async def ping():
     logger.debug("Ping endpoint called")
+    redis_client = await redis_manager.get_client()
     return {"message": "pong"}

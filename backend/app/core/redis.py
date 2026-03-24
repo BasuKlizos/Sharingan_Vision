@@ -4,7 +4,7 @@ import asyncio
 from redis.asyncio import Redis
 from app.core.config import settings
 from app.core.singleton import SingletonMeta
-
+from app.logger import logger
 
 class RedisClient(metaclass=SingletonMeta):
     """
@@ -19,7 +19,6 @@ class RedisClient(metaclass=SingletonMeta):
         return Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
-            password=settings.REDIS_PASSWORD or None,
             db=settings.REDIS_DB,
             socket_timeout=settings.REDIS_TIMEOUT,
             decode_responses=True,
