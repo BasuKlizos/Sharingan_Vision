@@ -1,0 +1,46 @@
+# === Python & Bytecode ===
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Environments & Secrets ===
+# This ignores your specific venv and common names
+sharingan_venv/
+venv/
+env/
+.env
+.venv/
+auth_tokens.txt
+
+# === Backend Specifics ===
+# Ignore the log files that keep changing
+backend/logs/*.log
+*.log
+
+# === Computer Vision & Large Assets ===
+# Don't commit raw datasets or heavy model weights
+data/raw/
+data/processed/
+*.pth
+*.weights
+*.h5
+*.onnx
+*.pb
+
+# === OS & IDEs ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# === Distribution / Build ===
+dist/
+build/
+*.egg-info/
+
+backend/logs/*
+!backend/logs/.gitkeep
