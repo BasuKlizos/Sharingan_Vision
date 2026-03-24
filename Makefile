@@ -51,12 +51,8 @@ install:
 run: run-local
 
 # Local run (override Redis host)
-run-local:
-	cd backend && REDIS_HOST=localhost PYTHONPATH=. uvicorn $(APP_MODULE) --host $(HOST) --port $${PORT:-$(PORT)}
-
-dev:
-	cd backend && REDIS_HOST=localhost PYTHONPATH=. uvicorn $(APP_MODULE) --host $(HOST) --port $${PORT:-$(PORT)} --reload
-
+local:
+	cd backend && REDIS_HOST=localhost PYTHONPATH=. uvicorn $(APP_MODULE) --host $(HOST) --port $${PORT:-$(PORT)}  --reload
 stop:
 	@PID=$$(lsof -ti :$(PORT)); \
 	if [ -n "$$PID" ]; then \
@@ -69,21 +65,21 @@ stop:
 # =========================
 # Docker
 # =========================
-docker-build:
+build:
 	$(COMPOSE) build
 
-docker-up:
+up:
 	$(COMPOSE) up -d
 
-docker-down:
+down:
 	$(COMPOSE) down
 
-docker-rebuild:
+rebuild:
 	$(COMPOSE) up -d --build
 
 restart: docker-down docker-up
 
-docker-logs:
+logs:
 	$(COMPOSE) logs -f
 
 backend-logs:

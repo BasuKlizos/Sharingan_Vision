@@ -22,12 +22,12 @@ services:
       - "${REDIS_PORT}:6379"
       - "${REDIS_INSIGHT_PORT}:8001"
     volumes:
-      - ./redis/redis.conf:/tmp/redis.conf
       - redis_data:/data
     command: >
       sh -c "
-      envsubst < /tmp/redis.conf > /etc/redis-stack.conf &&
-      redis-stack-server /etc/redis-stack.conf
+      redis-stack-server
+      --requirepass $$REDIS_PASSWORD
+      --port 6379
       "
 
 volumes:

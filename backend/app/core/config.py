@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     
     # Redis Credentials
     REDIS_PORT: int = config("REDIS_PORT", cast=int, default=6379)
+    REDIS_INSIGHT_PORT: int = config("REDIS_INSIGHT_PORT", cast=int, default=8001)
     REDIS_HOST: str = config("REDIS_HOST", cast=str, default="localhost")
     REDIS_DB: int = config("REDIS_DB", cast=int, default=0)
     REDIS_PASSWORD: Optional[str] = config("REDIS_PASSWORD", cast=str, default="")
