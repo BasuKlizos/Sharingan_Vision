@@ -13,11 +13,14 @@ class Settings(BaseSettings):
     
     APP_NAME: str = "AI Interview Monitoring System"
     PROJECT_NAME: str = "ai-interview-backend"
+    DESCRIPTION: str = "Backend for AI Interview Monitoring System"
     VERSION: str = "1.0.0"
     
     # Environment
     DEBUG: bool = config("DEBUG", cast=bool, default=False)
     
+    API_V1_STR: str = config("API_V1_STR", default="/api/v1")
+
     # Server settings
     HOST: str = config("HOST", default="127.0.0.1")
     PORT: int = config("PORT", default=8000, cast=int)
