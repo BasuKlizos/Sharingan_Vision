@@ -14,6 +14,11 @@ env/
 .env
 .venv/
 auth_tokens.txt
+.env.local
+
+env/backend/.env
+env/backend/.env.local
+
 
 # === Backend Specifics ===
 # Ignore the log files that keep changing
