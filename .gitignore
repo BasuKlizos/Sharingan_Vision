@@ -49,3 +49,5 @@ build/
 
 backend/logs/*
 !backend/logs/.gitkeep
+backend/app/.env
+.env*
