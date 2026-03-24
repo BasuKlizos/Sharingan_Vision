@@ -1,8 +1,18 @@
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
 from app.logger import logger
-
 from app.middleware.log_middleware import log_request_middleware
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Application startup complete")
+    yield
+    # Shutdown
+    logger.info("Application shutting down")
+
 
 app = FastAPI(
     title="My FastAPI Application",
@@ -11,19 +21,11 @@ app = FastAPI(
     openapi_url="/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
+# Middleware
 app.middleware("http")(log_request_middleware)
-
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Application startup complete")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Application shutting down")
 
 
 @app.get("/ping")
