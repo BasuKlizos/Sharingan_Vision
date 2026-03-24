@@ -5,6 +5,7 @@ from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
 from app.core.redis import redis_manager
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Connecting to Redis...")
