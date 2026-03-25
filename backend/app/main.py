@@ -54,3 +54,14 @@ async def ping():
     logger.debug("Ping endpoint called")
     redis_client = await redis_manager.get_client()
     return {"message": "pong"}
+
+
+@app.get("/api/health", tags=["System"])
+async def health_check():
+    """
+    Health check endpoint to verify API is running.
+    Returns status 'healthy' if the API is operational
+    """
+    logger.info("Health check endpoint called")
+    return {"status": "healthy", "version": settings.VERSION}
+
