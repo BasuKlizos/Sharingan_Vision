@@ -1,4 +1,5 @@
-import uuid
+import asyncio
+import numpy as np
 from typing import Dict
 from fastapi import WebSocket
 
@@ -61,12 +62,65 @@ class WebRTCService:
                     f"[WebRTC] Track received | kind={track.kind} | session_id={session_id}"
                 )
 
+                # ---------------- VIDEO ----------------
                 if track.kind == "video":
-                    logger.info(
-                        f"[WebRTC] Video track ready for processing | session_id={session_id}"
-                    )
-                    # TODO: Send frames to CV pipeline
 
+                    async def process_video():
+                        logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
+
+                        while True:
+                            try:
+                                frame = await track.recv()
+
+                                logger.debug(
+                                    f"[VideoFrame] pts={frame.pts}, size={frame.width}x{frame.height}"
+                                )
+
+                                # TODO: Send to CV pipeline
+                                # img = frame.to_ndarray(format="bgr24")
+
+                            except Exception as e:
+                                logger.error(f"[WebRTC] Video frame error: {e}")
+                                break
+
+                    asyncio.create_task(process_video())
+
+                # ---------------- AUDIO ----------------
+                elif track.kind == "audio":
+
+                    async def process_audio():
+                        logger.info(f"[WebRTC] Start audio processing | session_id={session_id}")
+
+                        while True:
+                            try:
+                                frame = await track.recv()
+
+                                # Convert to numpy
+                                audio = frame.to_ndarray()
+
+                                logger.debug(
+                                    f"[AudioFrame] pts={frame.pts}, "
+                                    f"samples={frame.samples}, "
+                                    f"rate={frame.sample_rate}, "
+                                    f"channels={audio.shape[0]} "
+                                    f"audio {audio}"
+                                )
+
+                                # simple speech detection
+                                volume = np.abs(audio).mean()
+
+                                if volume > 1000:  # tune threshold
+                                    logger.debug(f"[Audio] Speaking detected | session_id={session_id}")
+
+                                # TODO: send to ASR / analysis pipeline
+
+                            except Exception as e:
+                                logger.error(f"[WebRTC] Audio frame error: {e}")
+                                break
+
+                    asyncio.create_task(process_audio())
+
+                # ---------------- TRACK END ----------------
                 @track.on("ended")
                 async def on_ended():
                     logger.info(
