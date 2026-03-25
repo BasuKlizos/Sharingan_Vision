@@ -6,6 +6,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole
 
 from app.modules.signaling.interfaces import BaseConnectionManager
+from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
 from app.logger import logger
 
@@ -45,7 +46,7 @@ class SignalingService:
 class WebRTCService:
 
     async def handle_offer(self, sdp: str, type: str):
-        session_id = str(uuid.uuid4())
+        session_id = generate_session_id()
         pc = RTCPeerConnection()
 
         try:
