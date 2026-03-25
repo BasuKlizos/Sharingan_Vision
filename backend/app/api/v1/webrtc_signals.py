@@ -11,7 +11,7 @@ from app.modules.signaling.service import WebRTCService
 
 router = APIRouter()
 
-@router.post("/webrtc/offer", response_model=AnswerResponse)
+@router.post("/offer", response_model=AnswerResponse)
 async def handle_offer(
     payload: OfferRequest,
     service: Annotated[WebRTCService, Depends(get_webrtc_service)],
