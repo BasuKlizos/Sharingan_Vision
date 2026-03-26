@@ -171,7 +171,7 @@ class WebRTCService:
 
             return await self._handle_sdp_offer(pc, sdp, type, session_id)
 
-        except Exception as e:
+        except Exception:
             logger.exception(
                 f"[WebRTC] Critical failure in handle_offer | session_id={session_id}"
             )
@@ -190,7 +190,7 @@ class WebRTCService:
                 logger.info(
                     f"[WebRTC] Peer connection closed | session_id={session_id}"
                 )
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"[WebRTC] Error closing peer connection | session_id={session_id} | error={str(e)}"
+                    f"[WebRTC] Error closing peer connection | session_id={session_id}"
                 )
