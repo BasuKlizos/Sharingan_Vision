@@ -1,5 +1,6 @@
 import asyncio
 import numpy as np
+import time
 from typing import Dict
 from fastapi import WebSocket
 
@@ -7,8 +8,10 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole
 
 from app.modules.signaling.interfaces import BaseConnectionManager
+from app.modules.detection.yolo_detector import YoloDetector
 from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
+from app.core.config import settings
 from app.logger import logger
 
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
@@ -50,6 +53,12 @@ class WebRTCService:
         
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
 
+        last_inference_ts = 0.0
+        detector = YoloDetector(
+            model_path=getattr(settings, "YOLO_MODEL_PATH", "yolov8n.pt"),
+            conf_threshold=float(getattr(settings, "YOLO_CONF_THRESHOLD", 0.25)),
+        )
+
         while True:
             try:
                 frame = await track.recv()
@@ -58,8 +67,45 @@ class WebRTCService:
                     f"[VideoFrame] pts={frame.pts}, size={frame.width}x{frame.height}"
                 )
 
-                # TODO: Send to CV pipeline
-                # img = frame.to_ndarray(format="bgr24")
+                if not getattr(settings, "ENABLE_YOLO", False):
+                    continue
+
+                fps = int(getattr(settings, "DETECTION_FPS", 5))
+                if fps > 0:
+                    now = time.monotonic()
+                    if now - last_inference_ts < (1.0 / fps):
+                        continue
+                    last_inference_ts = now
+
+                try:
+                    import cv2 
+                except Exception as e:
+                    logger.error(
+                        f"[WebRTC] OpenCV not installed; cannot run YOLO | session_id={session_id} | error={e}"
+                    )
+                    await asyncio.sleep(1)
+                    continue
+
+                img = frame.to_ndarray(format="bgr24")
+
+                # Optional: downscale for speed while keeping aspect ratio
+                max_w = int(getattr(settings, "YOLO_MAX_WIDTH", 640))
+                if max_w > 0 and img.shape[1] > max_w:
+                    scale = max_w / float(img.shape[1])
+                    img = cv2.resize(
+                        img,
+                        (max_w, int(img.shape[0] * scale)),
+                        interpolation=cv2.INTER_AREA,
+                    )
+
+                detections = await asyncio.to_thread(detector.detect, img)
+                if detections:
+                    summary = ", ".join(
+                        f"{d.class_name}:{d.confidence:.2f}" for d in detections[:5]
+                    )
+                    logger.info(
+                        f"[YOLO] detections={len(detections)} | session_id={session_id} | {summary}"
+                    )
 
             except Exception as e:
                 logger.error(f"[WebRTC] Video frame error: {e}")

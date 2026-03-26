@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     DETECTION_FPS: int = 5  # frames per second (optimization)
     MAX_NO_FACE_SECONDS: int = 10  # trigger alert
 
+    # YOLO (video)
+    ENABLE_YOLO: bool = config("ENABLE_YOLO", cast=bool, default=False)
+    YOLO_MODEL_PATH: str = config("YOLO_MODEL_PATH", default="yolov8n.pt")
+    YOLO_CONF_THRESHOLD: float = config("YOLO_CONF_THRESHOLD", cast=float, default=0.25)
+    YOLO_MAX_WIDTH: int = config("YOLO_MAX_WIDTH", cast=int, default=640)
+
 
 
 @lru_cache()
@@ -58,4 +64,3 @@ def get_settings():
 
 
 settings = get_settings()
-
