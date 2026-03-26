@@ -43,6 +43,7 @@ class YoloDetector:
         self._ensure_model()
 
         threshold = self._conf_threshold if conf_threshold is None else conf_threshold
+        logger.debug(f"[YOLO] Running inference | conf_threshold={threshold}")
 
         # ultralytics returns a list of Results objects
         results = self._model.predict(img_bgr, conf=threshold, verbose=False)
@@ -76,4 +77,5 @@ class YoloDetector:
                     )
                 )
 
+        logger.debug(f"[YOLO] Inference complete | detections={len(detections)}")
         return detections

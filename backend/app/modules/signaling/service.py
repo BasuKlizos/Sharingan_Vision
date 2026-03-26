@@ -3,6 +3,7 @@ import numpy as np
 import time
 from typing import Dict
 from fastapi import WebSocket
+import cv2 
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole
@@ -58,6 +59,15 @@ class WebRTCService:
             model_path=getattr(settings, "YOLO_MODEL_PATH", "yolov8n.pt"),
             conf_threshold=float(getattr(settings, "YOLO_CONF_THRESHOLD", 0.25)),
         )
+        logger.info(
+            "[WebRTC] YOLO config | session_id=%s | enabled=%s | model_path=%s | conf=%s | max_width=%s | fps=%s",
+            session_id,
+            getattr(settings, "ENABLE_YOLO", False),
+            getattr(settings, "YOLO_MODEL_PATH", "yolov8n.pt"),
+            getattr(settings, "YOLO_CONF_THRESHOLD", 0.25),
+            getattr(settings, "YOLO_MAX_WIDTH", 640),
+            getattr(settings, "DETECTION_FPS", 5),
+        )
 
         while True:
             try:
@@ -70,21 +80,12 @@ class WebRTCService:
                 if not getattr(settings, "ENABLE_YOLO", False):
                     continue
 
-                fps = int(getattr(settings, "DETECTION_FPS", 5))
+                fps = int(getattr(settings, "DETECTION_FPS", 10))
                 if fps > 0:
                     now = time.monotonic()
                     if now - last_inference_ts < (1.0 / fps):
                         continue
                     last_inference_ts = now
-
-                try:
-                    import cv2 
-                except Exception as e:
-                    logger.error(
-                        f"[WebRTC] OpenCV not installed; cannot run YOLO | session_id={session_id} | error={e}"
-                    )
-                    await asyncio.sleep(1)
-                    continue
 
                 img = frame.to_ndarray(format="bgr24")
 
@@ -92,13 +93,27 @@ class WebRTCService:
                 max_w = int(getattr(settings, "YOLO_MAX_WIDTH", 640))
                 if max_w > 0 and img.shape[1] > max_w:
                     scale = max_w / float(img.shape[1])
+                    logger.debug(
+                        "[WebRTC] Resizing frame | session_id=%s | from=%sx%s | to_width=%s",
+                        session_id,
+                        img.shape[1],
+                        img.shape[0],
+                        max_w,
+                    )
                     img = cv2.resize(
                         img,
                         (max_w, int(img.shape[0] * scale)),
                         interpolation=cv2.INTER_AREA,
                     )
 
+                t0 = time.monotonic()
                 detections = await asyncio.to_thread(detector.detect, img)
+                infer_ms = (time.monotonic() - t0) * 1000.0
+                logger.debug(
+                    "[WebRTC] YOLO inference time | session_id=%s | ms=%.1f",
+                    session_id,
+                    infer_ms,
+                )
                 if detections:
                     summary = ", ".join(
                         f"{d.class_name}:{d.confidence:.2f}" for d in detections[:5]
@@ -151,9 +166,9 @@ class WebRTCService:
             if track.kind == "video":
                 task = asyncio.create_task(self._process_video_track(track, session_id))
                 track.task = task
-            elif track.kind == "audio":
-                task = asyncio.create_task(self._process_audio_track(track, session_id))
-                track.task = task
+            # elif track.kind == "audio":
+            #     task = asyncio.create_task(self._process_audio_track(track, session_id))
+            #     track.task = task
 
             @track.on("ended")
             async def on_ended():
