@@ -103,9 +103,11 @@ class WebRTCService:
             )
 
             if track.kind == "video":
-                asyncio.create_task(self._process_video_track(track, session_id))
+                task = asyncio.create_task(self._process_video_track(track, session_id))
+                track.task = task
             elif track.kind == "audio":
-                asyncio.create_task(self._process_audio_track(track, session_id))
+                task = asyncio.create_task(self._process_audio_track(track, session_id))
+                track.task = task
 
             @track.on("ended")
             async def on_ended():
