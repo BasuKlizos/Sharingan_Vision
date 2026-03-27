@@ -1,4 +1,5 @@
 import time
+import json
 import asyncio
 import numpy as np
 from typing import Dict
@@ -54,6 +55,7 @@ class WebRTCService:
     def __init__(self):
         self.face_detector = MediaPipeFaceDetector()
         self.face_analyzer = FaceAnalyzer()
+        self.data_channels = {}
     
     async def _process_video_track(self, track, session_id: str):
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
@@ -87,13 +89,16 @@ class WebRTCService:
                 )
 
                 # Drawing
-                img = draw_landmarks(img, results)
+                # img = draw_landmarks(img, results)
 
                 # Logging alerts
                 if analysis["alerts"]:
                     logger.warning(
                         f"[AI] Alerts: {analysis['alerts']} | session_id={session_id}"
                     )
+                
+                if frame_count % 5 == 0:
+                    self._send_analysis(session_id, analysis)
 
             except Exception as e:
                 logger.error(f"[WebRTC] Video frame error: {e}")
@@ -105,6 +110,36 @@ class WebRTCService:
 
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
+    def _send_analysis(self, session_id: str, analysis: dict):
+        channel = self.data_channels.get(session_id)
+
+        if not channel:
+            return
+
+        logger.debug(
+            f"[DataChannel] state={channel.readyState} | session_id={session_id}"
+        )
+
+        if channel.readyState != "open":
+            self.data_channels.pop(session_id, None)
+            return
+
+        try:
+            payload = json.dumps({
+                "type": "face_analysis",
+                "data": analysis
+            })
+
+            channel.send(payload)
+
+            logger.debug(
+                f"[DataChannel] Sent analysis | session_id={session_id} | payload={payload}"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"[DataChannel] Send failed | session_id={session_id} | error={e}"
+            )
 
     async def _process_audio_track(self, track, session_id: str):
         logger.info(f"[WebRTC] Start audio processing | session_id={session_id}")
@@ -160,14 +195,17 @@ class WebRTCService:
         @pc.on("datachannel")
         def on_datachannel(channel):
             logger.info(
-                f"[WebRTC] DataChannel received | label={channel.label} | session_id={session_id}"
+                f"[WebRTC] DataChannel connected | session_id={session_id}"
             )
+
+            self.data_channels[session_id] = channel
 
             @channel.on("message")
             def on_message(message):
                 logger.debug(
                     f"[WebRTC] DataChannel message | session_id={session_id} | message={message}"
                 )
+
 
     async def _handle_sdp_offer(self, pc: RTCPeerConnection, sdp: str, type: str, session_id: str):
         try:
@@ -228,6 +266,7 @@ class WebRTCService:
         if pc:
             try:
                 await pc.close()
+                self.data_channels.pop(session_id, None)
                 logger.info(
                     f"[WebRTC] Peer connection closed | session_id={session_id}"
                 )
