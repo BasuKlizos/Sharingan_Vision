@@ -72,8 +72,8 @@ class WebRTCService:
                 frame_count += 1
 
                 # Skip frames
-                if frame_count % 2 != 0:
-                    continue
+                # if frame_count % 2 != 0:
+                #     continue
 
                 img = frame.to_ndarray(format="bgr24")
                 img = cv2.resize(img, (640, 480))
@@ -108,9 +108,9 @@ class WebRTCService:
             elapsed = time.time() - start_time
             sleep_time = frame_interval - elapsed
             logger.debug(f"sleep_time={sleep_time}")
-            if sleep_time > 0:
-                await asyncio.sleep(sleep_time)
-                
+            # if sleep_time > 0:
+            #     await asyncio.sleep(sleep_time)
+
     def _send_analysis(self, session_id: str, analysis: dict):
         channel = self.data_channels.get(session_id)
 
