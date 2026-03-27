@@ -1,3 +1,4 @@
+import time
 import asyncio
 import numpy as np
 from typing import Dict
@@ -47,23 +48,40 @@ class SignalingService:
 class WebRTCService:
 
     async def _process_video_track(self, track, session_id: str):
-        
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
 
+        target_fps = 15
+        frame_interval = 1 / target_fps
+        frame_count = 0
+
         while True:
+            start_time = time.time()
+
             try:
                 frame = await track.recv()
+                frame_count += 1
+
+                # Skip frames (reduce load)
+                if frame_count % 2 != 0:
+                    continue
 
                 logger.debug(
                     f"[VideoFrame] pts={frame.pts}, size={frame.width}x{frame.height}"
                 )
 
-                # TODO: Send to CV pipeline
+                # TODO: CV pipeline
                 # img = frame.to_ndarray(format="bgr24")
 
             except Exception as e:
                 logger.error(f"[WebRTC] Video frame error: {e}")
                 break
+
+            # FPS throttle
+            elapsed = time.time() - start_time
+            sleep_time = frame_interval - elapsed
+
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
 
     async def _process_audio_track(self, track, session_id: str):
         logger.info(f"[WebRTC] Start audio processing | session_id={session_id}")
@@ -105,9 +123,9 @@ class WebRTCService:
             if track.kind == "video":
                 task = asyncio.create_task(self._process_video_track(track, session_id))
                 track.task = task
-            elif track.kind == "audio":
-                task = asyncio.create_task(self._process_audio_track(track, session_id))
-                track.task = task
+            # elif track.kind == "audio":
+            #     task = asyncio.create_task(self._process_audio_track(track, session_id))
+            #     track.task = task
 
             @track.on("ended")
             async def on_ended():
