@@ -4,13 +4,16 @@ import numpy as np
 from typing import Dict
 from fastapi import WebSocket
 
+import cv2
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole
+
 
 from app.modules.signaling.interfaces import BaseConnectionManager
 from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
 from app.logger import logger
+from app.modules.detection.mediapipe_face import MediaPipeFaceDetector
 
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
 
@@ -46,7 +49,8 @@ class SignalingService:
         await self.manager.relay(room_id, sender, message)
 
 class WebRTCService:
-
+    def __init__(self):
+        self.face_detector = MediaPipeFaceDetector()
     async def _process_video_track(self, track, session_id: str):
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
 
@@ -65,12 +69,15 @@ class WebRTCService:
                 if frame_count % 2 != 0:
                     continue
 
-                logger.debug(
-                    f"[VideoFrame] pts={frame.pts}, size={frame.width}x{frame.height}"
-                )
+                img = frame.to_ndarray(format="bgr24")
+                img = cv2.resize(img, (640, 480))
 
-                # TODO: CV pipeline
-                # img = frame.to_ndarray(format="bgr24")
+                img, result = self.face_detector.process(img, session_id=session_id)
+
+                if result["alerts"]:
+                    logger.warning(
+                        f"[AI] Alerts: {result['alerts']} | session_id={session_id}"
+                    )
 
             except Exception as e:
                 logger.error(f"[WebRTC] Video frame error: {e}")
