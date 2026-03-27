@@ -54,8 +54,8 @@ class YoloDetector:
             boxes = getattr(r, "boxes", None)
             if boxes is None:
                 continue
-
-            # xyxy, cls, conf are torch tensors
+            
+            # xyxy, cls, conf are torch tensors6
             for b in boxes:
                 xyxy = getattr(b, "xyxy", None)
                 cls = getattr(b, "cls", None)
