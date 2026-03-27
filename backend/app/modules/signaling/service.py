@@ -52,12 +52,8 @@ class SignalingService:
 
 class WebRTCService:
 
-    async def _process_video_track(self, track, session_id: str):
-        
-        logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
-
-        last_inference_ts = 0.0
-        frame_id = 0
+    def _init_detector(self, session_id: str):
+        """Initialize YOLO detector with settings"""
         detector = YoloDetector(
             model_path=getattr(settings, "YOLO_MODEL_PATH", "yolov8n.pt"),
             conf_threshold=float(getattr(settings, "YOLO_CONF_THRESHOLD", 0.25)),
@@ -71,74 +67,124 @@ class WebRTCService:
             getattr(settings, "YOLO_MAX_WIDTH", 640),
             getattr(settings, "DETECTION_FPS", 5),
         )
+        return detector
+
+    def _should_process_frame(self, last_inference_ts: float) -> tuple[bool, float]:
+        """Check if frame should be processed based on FPS setting"""
+        fps = int(getattr(settings, "DETECTION_FPS", 10))
+        if fps > 0:
+            now = time.monotonic()
+            if now - last_inference_ts < (1.0 / fps):
+                return False, last_inference_ts
+            return True, now
+        return True, last_inference_ts
+
+    def _prepare_frame(self, img, session_id: str):
+        """Resize frame if needed while maintaining aspect ratio"""
+        max_w = int(getattr(settings, "YOLO_MAX_WIDTH", 640))
+        if max_w > 0 and img.shape[1] > max_w:
+            scale = max_w / float(img.shape[1])
+            logger.debug(
+                "[WebRTC] Resizing frame | session_id=%s | from=%sx%s | to_width=%s",
+                session_id,
+                img.shape[1],
+                img.shape[0],
+                max_w,
+            )
+            img = cv2.resize(
+                img,
+                (max_w, int(img.shape[0] * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+        return img
+
+    async def _run_detection(self, img, detector, session_id: str):
+        """Run YOLO detection on frame"""
+        t0 = time.monotonic()
+        detections = await asyncio.to_thread(detector.detect, img)
+        infer_ms = (time.monotonic() - t0) * 1000.0
+        logger.debug(
+            "[WebRTC] YOLO inference time | session_id=%s | ms=%.1f",
+            session_id,
+            infer_ms,
+        )
+        return detections
+
+    # TODO: Add MediaPipe detection here
+    # async def _run_mediapipe_detection(self, img, detector, session_id: str):
+    #     """Run MediaPipe detection on frame"""
+    #     t0 = time.monotonic()
+    #     detections = await asyncio.to_thread(detector.detect, img)
+    #     infer_ms = (time.monotonic() - t0) * 1000.0
+    #     return detections
+
+    async def _send_detection_results(self, detections, frame_id: int, session_id: str):
+        """Send detection results to frontend via data channel"""
+        if not detections:
+            return
+
+        summary = ", ".join(
+            f"{d.class_name}:{d.confidence:.2f}" for d in detections[:5]
+        )
+        logger.info(
+            f"[YOLO] detections={len(detections)} | session_id={session_id} | {summary}"
+        )
+        
+        # Create detection frame
+        detection_frame = DetectionFrame.from_yolo_detections(
+            frame_id=frame_id,
+            timestamp=time.time(),
+            yolo_detections=detections,
+        )
+        
+        # Send through data channel
+        channel_manager = DETECTION_CHANNELS.get(session_id)
+        if channel_manager:
+            logger.debug(f"[WebRTC] Sending detection frame | session_id={session_id} | frame_id={frame_id}")
+            await channel_manager.send_detection_frame(detection_frame)
+        else:
+            logger.warning(f"[WebRTC] No channel manager for session_id={session_id}, cannot send detections")
+
+    async def _process_video_track(self, track, session_id: str):
+        """Process incoming video track and run detection models"""
+        logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
+
+        last_inference_ts = 0.0
+        frame_id = 0
+        
+        # Initialize detector
+        if not getattr(settings, "ENABLE_YOLO", False):
+            logger.info(f"[WebRTC] YOLO disabled for session_id={session_id}")
+            return
+        
+        detector = self._init_detector(session_id)
 
         while True:
             try:
                 frame = await track.recv()
 
-                # logger.debug(
-                #     f"[VideoFrame] pts={frame.pts}, size={frame.width}x{frame.height}"
-                # )
-
-                if not getattr(settings, "ENABLE_YOLO", False):
+                # Check if we should process this frame based on FPS
+                should_process, last_inference_ts = self._should_process_frame(last_inference_ts)
+                if not should_process:
+                    frame_id += 1
                     continue
 
-                fps = int(getattr(settings, "DETECTION_FPS", 10))
-                if fps > 0:
-                    now = time.monotonic()
-                    if now - last_inference_ts < (1.0 / fps):
-                        continue
-                    last_inference_ts = now
-
+                # Convert frame to ndarray
                 img = frame.to_ndarray(format="bgr24")
 
-                # Optional: downscale for speed while keeping aspect ratio
-                max_w = int(getattr(settings, "YOLO_MAX_WIDTH", 640))
-                if max_w > 0 and img.shape[1] > max_w:
-                    scale = max_w / float(img.shape[1])
-                    logger.debug(
-                        "[WebRTC] Resizing frame | session_id=%s | from=%sx%s | to_width=%s",
-                        session_id,
-                        img.shape[1],
-                        img.shape[0],
-                        max_w,
-                    )
-                    img = cv2.resize(
-                        img,
-                        (max_w, int(img.shape[0] * scale)),
-                        interpolation=cv2.INTER_AREA,
-                    )
+                # Prepare frame (resize if needed)
+                img = self._prepare_frame(img, session_id)
 
-                t0 = time.monotonic()
-                detections = await asyncio.to_thread(detector.detect, img)
-                infer_ms = (time.monotonic() - t0) * 1000.0
-                logger.debug(
-                    "[WebRTC] YOLO inference time | session_id=%s | ms=%.1f",
-                    session_id,
-                    infer_ms,
-                )
-                if detections:
-                    summary = ", ".join(
-                        f"{d.class_name}:{d.confidence:.2f}" for d in detections[:5]
-                    )
-                    logger.info(
-                        f"[YOLO] detections={len(detections)} | session_id={session_id} | {summary}"
-                    )
-                    
-                    # Send detections to frontend via data channel
-                    detection_frame = DetectionFrame.from_yolo_detections(
-                        frame_id=frame_id,
-                        timestamp=time.time(),
-                        yolo_detections=detections,
-                    )
-                    
-                    channel_manager = DETECTION_CHANNELS.get(session_id)
-                    if channel_manager:
-                        logger.debug(f"[WebRTC] Sending detection frame | session_id={session_id} | frame_id={frame_id}")
-                        await channel_manager.send_detection_frame(detection_frame)
-                    else:
-                        logger.warning(f"[WebRTC] No channel manager for session_id={session_id}, cannot send detections")
-                        
+                # Run YOLO detection
+                detections = await self._run_detection(img, detector, session_id)
+                
+                # TODO: Run MediaPipe detection here and merge results
+                # mediapipe_detections = await self._run_mediapipe_detection(img, mediapipe_detector, session_id)
+                # combined_detections = self._merge_detections(detections, mediapipe_detections)
+                
+                # Send detection results to frontend
+                await self._send_detection_results(detections, frame_id, session_id)
+                
                 frame_id += 1
 
             except Exception as e:
