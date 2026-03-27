@@ -107,9 +107,10 @@ class WebRTCService:
             # FPS throttle
             elapsed = time.time() - start_time
             sleep_time = frame_interval - elapsed
-
+            logger.debug(f"sleep_time={sleep_time}")
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
+                
     def _send_analysis(self, session_id: str, analysis: dict):
         channel = self.data_channels.get(session_id)
 
