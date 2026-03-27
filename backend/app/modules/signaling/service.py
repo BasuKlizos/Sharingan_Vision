@@ -14,6 +14,8 @@ from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
 from app.logger import logger
 from app.modules.detection.mediapipe_face import MediaPipeFaceDetector
+from app.modules.analytics.face_analyzer import FaceAnalyzer
+from app.api.utils.draw_utils import draw_landmarks
 
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
 
@@ -51,6 +53,8 @@ class SignalingService:
 class WebRTCService:
     def __init__(self):
         self.face_detector = MediaPipeFaceDetector()
+        self.face_analyzer = FaceAnalyzer()
+    
     async def _process_video_track(self, track, session_id: str):
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
 
@@ -65,18 +69,30 @@ class WebRTCService:
                 frame = await track.recv()
                 frame_count += 1
 
-                # Skip frames (reduce load)
+                # Skip frames
                 if frame_count % 2 != 0:
                     continue
 
                 img = frame.to_ndarray(format="bgr24")
                 img = cv2.resize(img, (640, 480))
 
-                img, result = self.face_detector.process(img, session_id=session_id)
+                # Detection
+                results = self.face_detector.detect(img)
 
-                if result["alerts"]:
+                # Analysis
+                analysis = self.face_analyzer.analyze(
+                    results,
+                    img.shape,
+                    session_id=session_id
+                )
+
+                # Drawing
+                img = draw_landmarks(img, results)
+
+                # Logging alerts
+                if analysis["alerts"]:
                     logger.warning(
-                        f"[AI] Alerts: {result['alerts']} | session_id={session_id}"
+                        f"[AI] Alerts: {analysis['alerts']} | session_id={session_id}"
                     )
 
             except Exception as e:
