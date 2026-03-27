@@ -80,10 +80,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 })
                 continue
 
-            logger.debug(
-                f"Signal received room={room_id} type={message.type} role={message.role}"
-            )
-
             try:
                 await service.handle_message(
                     room_id,
