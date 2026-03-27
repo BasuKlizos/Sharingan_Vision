@@ -6,7 +6,6 @@ from fastapi import WebSocket
 import cv2 
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaBlackhole
 
 from app.modules.signaling.interfaces import BaseConnectionManager
 from app.modules.signaling.detection_channel import DetectionDataChannelManager
@@ -146,35 +145,7 @@ class WebRTCService:
                 logger.error(f"[WebRTC] Video frame error: {e}")
                 break
 
-    async def _process_audio_track(self, track, session_id: str):
-        logger.info(f"[WebRTC] Start audio processing | session_id={session_id}")
 
-        while True:
-            try:
-                frame = await track.recv()
-
-                # Convert to numpy
-                audio = frame.to_ndarray()
-
-                logger.debug(
-                    f"[AudioFrame] pts={frame.pts}, "
-                    f"samples={frame.samples}, "
-                    f"rate={frame.sample_rate}, "
-                    f"channels={audio.shape[0]} "
-                    f"audio {audio}"
-                )
-
-                # simple speech detection
-                volume = np.abs(audio).mean()
-
-                if volume > 1000:  # tune threshold
-                    logger.debug(f"[Audio] Speaking detected | session_id={session_id}")
-
-                # TODO: send to ASR / analysis pipeline
-
-            except Exception as e:
-                logger.error(f"[WebRTC] Audio frame error: {e}")
-                break
 
     def _setup_track_handlers(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("track")
@@ -196,6 +167,23 @@ class WebRTCService:
                     f"[WebRTC] Track ended | kind={track.kind} | session_id={session_id}"
                 )
 
+    def _setup_detection_channel(self, channel, session_id: str):
+        """Set up detection data channel received from frontend"""
+        logger.info(
+            f"[DetectionChannel] Incoming detection channel from frontend | "
+            f"session_id={session_id} | readyState={channel.readyState}"
+        )
+        
+        # Create channel manager for this incoming channel
+        channel_manager = DetectionDataChannelManager(session_id)
+        channel_manager.set_channel(channel)
+        DETECTION_CHANNELS[session_id] = channel_manager
+        
+        logger.info(
+            f"[DetectionChannel] Channel manager set up for incoming channel | "
+            f"session_id={session_id} | is_ready={channel_manager.is_ready}"
+        )
+
     def _setup_datachannel_handler(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("datachannel")
         def on_datachannel(channel):
@@ -203,10 +191,15 @@ class WebRTCService:
                 f"[WebRTC] DataChannel received | label={channel.label} | session_id={session_id}"
             )
 
+            # Handle detection channel from frontend
+            if channel.label == "detections":
+                self._setup_detection_channel(channel, session_id)
+            
             @channel.on("message")
             def on_message(message):
                 logger.debug(
-                    f"[WebRTC] DataChannel message | session_id={session_id} | message={message}"
+                    f"[WebRTC] DataChannel message | session_id={session_id} | "
+                    f"label={channel.label} | message={message}"
                 )
         
         @pc.on("connectionstatechange")
@@ -221,45 +214,7 @@ class WebRTCService:
                 f"[WebRTC] ICE connection state changed | state={pc.iceConnectionState} | session_id={session_id}"
             )
     
-    def _create_detection_datachannel(self, pc: RTCPeerConnection, session_id: str) -> DetectionDataChannelManager:
-        """Create outbound data channel for sending detection data"""
-        try:
-            logger.info(
-                f"[DetectionChannel] Attempting to create channel | session_id={session_id} | "
-                f"pc_state={pc.connectionState} | ice_state={pc.iceConnectionState}"
-            )
-            
-            # Check if already created
-            if session_id in DETECTION_CHANNELS and DETECTION_CHANNELS[session_id].channel:
-                logger.info(
-                    f"[DetectionChannel] Channel already exists for session | session_id={session_id}"
-                )
-                return DETECTION_CHANNELS[session_id]
-            
-            detection_channel = pc.createDataChannel("detections")
-            logger.info(
-                f"[DetectionChannel] createDataChannel() called | session_id={session_id} | "
-                f"channel_object={detection_channel is not None} | readyState={detection_channel.readyState}"
-            )
-            
-            channel_manager = DetectionDataChannelManager(session_id)
-            channel_manager.set_channel(detection_channel)
-            
-            DETECTION_CHANNELS[session_id] = channel_manager
-            
-            logger.info(
-                f"[DetectionChannel] Channel created and stored | session_id={session_id} | "
-                f"readyState={detection_channel.readyState} | is_ready={channel_manager.is_ready}"
-            )
-            
-            return channel_manager
-        except Exception as e:
-            logger.error(
-                f"[DetectionChannel] FAILED to create channel | session_id={session_id} | "
-                f"error_type={type(e).__name__} | error={e}",
-                exc_info=True
-            )
-            raise
+
 
     async def _handle_sdp_offer(self, pc: RTCPeerConnection, sdp: str, type: str, session_id: str):
         try:
@@ -271,29 +226,10 @@ class WebRTCService:
             )
             raise InvalidMessageError("Invalid SDP offer")
 
-        # Create detection channel AFTER offer is set but BEFORE answer is created
-        try:
-            self._create_detection_datachannel(pc, session_id)
-        except Exception as e:
-            logger.error(
-                f"[DetectionChannel] Error creating channel | session_id={session_id} | error={e}",
-                exc_info=True
-            )
-
+        # Frontend will create the detection channel, we just handle it in _setup_datachannel_handler
         try:
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            
-            answer_sdp = pc.localDescription.sdp
-            
-            if "detections" in answer_sdp:
-                logger.info(
-                    f"[DetectionChannel] Channel found in answer SDP | session_id={session_id}"
-                )
-            else:
-                logger.warning(
-                    f"[DetectionChannel] WARNING - Channel NOT in answer SDP | session_id={session_id}"
-                )
         except Exception as e:
             logger.error(
                 f"[WebRTC] Failed to create answer | session_id={session_id} | error={str(e)}"
@@ -317,7 +253,6 @@ class WebRTCService:
 
             self._setup_track_handlers(pc, session_id)
             self._setup_datachannel_handler(pc, session_id)
-            # NOTE: Detection data channel will be created in _handle_sdp_offer after receiving offer
 
             return await self._handle_sdp_offer(pc, sdp, type, session_id)
 
