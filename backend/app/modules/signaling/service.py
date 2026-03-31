@@ -1,13 +1,11 @@
 import asyncio
-import numpy as np
 import time
 import json
-import cv2
-from typing import Dict
+from typing import Dict, Tuple, Optional
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 from app.modules.signaling.detection_channel import DetectionDataChannelManager
-from app.modules.signaling.detection_schema import DetectionFrame
+from app.modules.signaling.detection_schema import DetectionFrame, CropOffset
 from app.modules.detection.yolo_detector import YoloDetector
 from app.modules.detection.mediapipe_face import MediaPipeFaceDetector
 from app.modules.analytics.face_analyzer import FaceAnalyzer
@@ -44,6 +42,49 @@ class WebRTCService:
             return False, last_inference_ts
         return True, now
 
+    def _calculate_crop_offset(self, img, crop_enabled: bool = False) -> Tuple[any, CropOffset]:
+        """Apply cropping if enabled and return cropped image with offset info
+        
+        Returns:
+            Tuple of (cropped_image, CropOffset object)
+        """
+        h, w = img.shape[:2]
+        crop_offset = CropOffset(
+            original_width=w,
+            original_height=h,
+            cropped_width=w,
+            cropped_height=h,
+            x_offset=0,
+            y_offset=0
+        )
+        
+        # If cropping is enabled, apply it (e.g., crop center 80% of image)
+        if crop_enabled and getattr(settings, "ENABLE_CROP", False):
+            crop_percent = float(getattr(settings, "CROP_PERCENT", 0.8))
+            crop_w = int(w * crop_percent)
+            crop_h = int(h * crop_percent)
+            
+            # Center crop
+            x_start = (w - crop_w) // 2
+            y_start = (h - crop_h) // 2
+            x_end = x_start + crop_w
+            y_end = y_start + crop_h
+            
+            cropped_img = img[y_start:y_end, x_start:x_end]
+            
+            crop_offset = CropOffset(
+                original_width=w,
+                original_height=h,
+                cropped_width=crop_w,
+                cropped_height=crop_h,
+                x_offset=x_start,
+                y_offset=y_start
+            )
+            
+            return cropped_img, crop_offset
+        
+        return img, crop_offset
+
     async def _process_video_track(self, track, session_id: str):
         """Main Loop: Processes video and runs both YOLO and MediaPipe"""
         logger.info(f"[WebRTC] Start video processing | session_id={session_id}")
@@ -73,25 +114,37 @@ class WebRTCService:
                 processed_frames += 1
 
                 # Convert to numpy/OpenCV format
-                img = frame.to_ndarray(format="bgr24")
+                img = frame.to_ndarray(format="rgb24")
                 
-                # 1. Run MediaPipe Face Analysis (Always run if track exists)
-                face_results = await asyncio.to_thread(
-                    self.face_detector.detect,
-                    img
-                )   
-                face_analysis = self.face_analyzer.analyze(
-                    face_results, img.shape, session_id=session_id
+                # Apply cropping if enabled
+                img_to_process, crop_offset = self._calculate_crop_offset(
+                    img, crop_enabled=getattr(settings, "ENABLE_CROP", False)
+                )
+                
+                # 1. Run MediaPipe Face Analysis and YOLO Detection concurrently
+                async def detect_face():
+                    face_results = await asyncio.to_thread(
+                        self.face_detector.detect,
+                        img_to_process
+                    )
+                    return self.face_analyzer.analyze(
+                        face_results, img_to_process.shape, session_id=session_id
+                    )
+
+                async def detect_yolo():
+                    if yolo_detector:
+                        return await asyncio.to_thread(yolo_detector.detect, img_to_process)
+                    return []
+
+                # Run both detections concurrently
+                face_analysis, yolo_detections = await asyncio.gather(
+                    detect_face(),
+                    detect_yolo()
                 )
 
-                # 2. Run YOLO Detection (If enabled)
-                yolo_detections = []
-                if yolo_detector:
-                    yolo_detections = await asyncio.to_thread(yolo_detector.detect, img)
-
-                # 3. Send Unified Results
+                # 2. Send Unified Results with crop offset
                 self._send_combined_results(
-                    session_id, frame_id, face_analysis, yolo_detections
+                    session_id, frame_id, face_analysis, yolo_detections, crop_offset
                 )
 
                 frame_id += 1
@@ -123,7 +176,8 @@ class WebRTCService:
         session_id,
         frame_id,
         face_analysis,
-        yolo_detections
+        yolo_detections,
+        crop_offset: CropOffset = None
     ):
         raw_channel = self.data_channels.get(session_id)
 
@@ -131,26 +185,20 @@ class WebRTCService:
             return
 
         try:
-            # SERIALIZE YOLO DETECTIONS
-            serialized_detections = [
-                {
-                    "class_id": det.class_id,
-                    "class_name": det.class_name,
-                    "confidence": det.confidence,
-                    "bbox": {
-                        "x1": det.xyxy[0],
-                        "y1": det.xyxy[1],
-                        "x2": det.xyxy[2],
-                        "y2": det.xyxy[3],
-                    }
-                }
-                for det in (yolo_detections or [])
-            ]
+            # SERIALIZE YOLO DETECTIONS using DetectionFrame serializer
+            # Pass crop_offset so coordinates are transformed back to original frame
+            detection_frame = DetectionFrame.from_yolo_detections(
+                frame_id=frame_id,
+                timestamp=time.time(),
+                yolo_detections=yolo_detections,
+                crop_offset=crop_offset or CropOffset()
+            )
+            frame_dict = detection_frame.to_dict()
 
             payload = {
                 "type": "detection_frame",
                 "frame_id": frame_id,
-                "timestamp": time.time(),
+                "timestamp": frame_dict["timestamp"],
 
                 "face": face_analysis or {
                     "alerts": [],
@@ -159,9 +207,12 @@ class WebRTCService:
                 },
 
                 "yolo": {
-                    "detection_count": len(serialized_detections),
-                    "detections": serialized_detections
-                }
+                    "detection_count": frame_dict["detection_count"],
+                    "detections": frame_dict["detections"]
+                },
+                
+                # Include crop offset in payload so frontend knows original frame dimensions
+                "crop_offset": frame_dict.get("crop_offset", {})
             }
 
             raw_channel.send(json.dumps(payload))

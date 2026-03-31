@@ -36,11 +36,30 @@ class Detection:
 
 
 @dataclass
+class CropOffset:
+    """Crop region offset for coordinate transformation"""
+    x_offset: int = 0
+    y_offset: int = 0
+    original_width: int = 0
+    original_height: int = 0
+    cropped_width: int = 0
+    cropped_height: int = 0
+    
+    def to_dict(self) -> Dict[str, int]:
+        return asdict(self)
+
+
+@dataclass
 class DetectionFrame:
     """Frame with detections for sending to frontend"""
     frame_id: int
     timestamp: float
     detections: List[Detection]
+    crop_offset: CropOffset = None
+    
+    def __post_init__(self):
+        if self.crop_offset is None:
+            self.crop_offset = CropOffset()
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -49,6 +68,7 @@ class DetectionFrame:
             "timestamp": self.timestamp,
             "detection_count": len(self.detections),
             "detections": [d.to_dict() for d in self.detections],
+            "crop_offset": self.crop_offset.to_dict() if self.crop_offset else None,
         }
     
     def to_json(self) -> str:
@@ -60,11 +80,27 @@ class DetectionFrame:
         frame_id: int,
         timestamp: float,
         yolo_detections: List[Any],  # List[YoloDetection]
+        crop_offset: "CropOffset" = None,
     ) -> "DetectionFrame":
-        """Convert YoloDetector results to DetectionFrame"""
+        """Convert YoloDetector results to DetectionFrame
+        
+        Args:
+            frame_id: Frame identifier
+            timestamp: Frame timestamp
+            yolo_detections: List of YOLO detection results
+            crop_offset: CropOffset object with x/y offsets if frame was cropped
+        """
         detections = []
         for yolo_det in yolo_detections:
             x1, y1, x2, y2 = yolo_det.xyxy
+            
+            # Apply crop offset to convert back to original frame coordinates
+            if crop_offset and (crop_offset.x_offset > 0 or crop_offset.y_offset > 0):
+                x1 += crop_offset.x_offset
+                y1 += crop_offset.y_offset
+                x2 += crop_offset.x_offset
+                y2 += crop_offset.y_offset
+            
             detection = Detection(
                 class_id=yolo_det.class_id,
                 class_name=yolo_det.class_name,
@@ -77,4 +113,5 @@ class DetectionFrame:
             frame_id=frame_id,
             timestamp=timestamp,
             detections=detections,
+            crop_offset=crop_offset or CropOffset(),
         )

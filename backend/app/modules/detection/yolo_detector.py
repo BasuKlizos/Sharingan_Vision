@@ -34,10 +34,10 @@ class YoloDetector:
         logger.info(f"[YOLO] Loading model | path={self._model_path}")
         self._model = YOLO(self._model_path)
 
-    def detect(self, img_bgr, *, conf_threshold: Optional[float] = None) -> List[YoloDetection]:
+    def detect(self, img_rgb: bytes, *, conf_threshold: Optional[float] = None) -> List[YoloDetection]:
         """
         Args:
-            img_bgr: OpenCV BGR image (numpy array HxWx3 uint8)
+            img_rgb: OpenCV RGB image (numpy array HxWx3 uint8)
             conf_threshold: Optional override for confidence threshold
         """
         self._ensure_model()
@@ -46,7 +46,7 @@ class YoloDetector:
         logger.debug(f"[YOLO] Running inference | conf_threshold={threshold}")
 
         # ultralytics returns a list of Results objects
-        results = self._model.predict(img_bgr, conf=threshold, verbose=False)
+        results = self._model.predict(img_rgb, conf=threshold, verbose=False)
 
         detections: List[YoloDetection] = []
         for r in results:

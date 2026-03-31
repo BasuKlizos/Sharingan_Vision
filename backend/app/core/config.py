@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     FACE_DETECTION_MODEL: str = "mediapipe"  # or opencv, dlib
     DETECTION_FPS: int = 10  # frames per second (optimization)
     MAX_NO_FACE_SECONDS: int = 10  # trigger alert
+    ENABLE_CROP: bool = config("ENABLE_CROP", cast=bool, default=True)
+    CROP_PERCENT: float = config("CROP_PERCENT", cast=float, default=0.8)
 
     # YOLO (video)
     ENABLE_YOLO: bool = config("ENABLE_YOLO", cast=bool, default=False)
