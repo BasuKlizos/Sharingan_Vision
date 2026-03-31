@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # AI / Camera Detection
     ENABLE_CAMERA_MONITORING: bool = True
     FACE_DETECTION_MODEL: str = "mediapipe"  # or opencv, dlib
-    DETECTION_FPS: int = 5  # frames per second (optimization)
+    DETECTION_FPS: int = 10  # frames per second (optimization)
     MAX_NO_FACE_SECONDS: int = 10  # trigger alert
 
     # YOLO (video)

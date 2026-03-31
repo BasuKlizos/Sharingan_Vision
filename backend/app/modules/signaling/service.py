@@ -50,7 +50,12 @@ class WebRTCService:
         
         last_inference_ts = 0.0
         frame_id = 0
+        total_frames = 0
+        processed_frames = 0
+        skipped_frames = 0
         
+        start_time = time.monotonic()
+
         # Initialize YOLO if enabled
         yolo_enabled = getattr(settings, "ENABLE_YOLO", False)
         yolo_detector = self._init_yolo_detector(session_id) if yolo_enabled else None
@@ -58,18 +63,23 @@ class WebRTCService:
         while True:
             try:
                 frame = await track.recv()
+                total_frames += 1
                 
                 # FPS Throttling
                 should_process, last_inference_ts = self._should_process_frame(last_inference_ts)
                 if not should_process:
-                    frame_id += 1
+                    skipped_frames += 1
                     continue
+                processed_frames += 1
 
                 # Convert to numpy/OpenCV format
                 img = frame.to_ndarray(format="bgr24")
                 
                 # 1. Run MediaPipe Face Analysis (Always run if track exists)
-                face_results = self.face_detector.detect(img)
+                face_results = await asyncio.to_thread(
+                    self.face_detector.detect,
+                    img
+                )   
                 face_analysis = self.face_analyzer.analyze(
                     face_results, img.shape, session_id=session_id
                 )
@@ -80,46 +90,84 @@ class WebRTCService:
                     yolo_detections = await asyncio.to_thread(yolo_detector.detect, img)
 
                 # 3. Send Unified Results
-                await self._send_combined_results(
+                self._send_combined_results(
                     session_id, frame_id, face_analysis, yolo_detections
                 )
 
                 frame_id += 1
+                now = time.monotonic()
+                if now - start_time >= 1.0:
+                    incoming_fps = total_frames / (now - start_time)
+                    processing_fps = processed_frames / (now - start_time)
+
+                    logger.info(
+                        f"[FPS] session={session_id} | "
+                        f"incoming={incoming_fps:.2f} FPS | "
+                        f"processed={processing_fps:.2f} FPS | "
+                        f"skipped={skipped_frames}"
+                    )
+
+                    # reset counters
+                    total_frames = 0
+                    processed_frames = 0
+                    skipped_frames = 0
+                    start_time = now
+
 
             except Exception as e:
                 logger.error(f"[WebRTC] Video processing error: {e}")
                 break
 
-    async def _send_combined_results(self, session_id, frame_id, face_analysis, yolo_detections):
-        """Sends data through the channel in a way the frontend expects"""
-        channel_manager = DETECTION_CHANNELS.get(session_id)
+    def _send_combined_results(
+        self,
+        session_id,
+        frame_id,
+        face_analysis,
+        yolo_detections
+    ):
         raw_channel = self.data_channels.get(session_id)
 
-        if not channel_manager or not raw_channel:
+        if not raw_channel:
             return
 
-        # A. Send Face Analysis (Mediapipe Logic)
-        if face_analysis:
-            try:
-                face_payload = json.dumps({
-                    "type": "face_analysis",
-                    "data": face_analysis
-                })
-                raw_channel.send(face_payload)
-            except Exception as e:
-                logger.error(f"[WebRTC] Face data send error: {e}")
+        try:
+            # SERIALIZE YOLO DETECTIONS
+            serialized_detections = [
+                {
+                    "class_id": det.class_id,
+                    "class_name": det.class_name,
+                    "confidence": det.confidence,
+                    "bbox": {
+                        "x1": det.xyxy[0],
+                        "y1": det.xyxy[1],
+                        "x2": det.xyxy[2],
+                        "y2": det.xyxy[3],
+                    }
+                }
+                for det in (yolo_detections or [])
+            ]
 
-        # B. Send YOLO Detections (YOLO Logic via Schema)
-        if yolo_detections:
-            try:
-                detection_frame = DetectionFrame.from_yolo_detections(
-                    frame_id=frame_id,
-                    timestamp=time.time(),
-                    yolo_detections=yolo_detections,
-                )
-                await channel_manager.send_detection_frame(detection_frame)
-            except Exception as e:
-                logger.error(f"[WebRTC] YOLO data send error: {e}")
+            payload = {
+                "type": "detection_frame",
+                "frame_id": frame_id,
+                "timestamp": time.time(),
+
+                "face": face_analysis or {
+                    "alerts": [],
+                    "faces": [],
+                    "face_count": 0
+                },
+
+                "yolo": {
+                    "detection_count": len(serialized_detections),
+                    "detections": serialized_detections
+                }
+            }
+
+            raw_channel.send(json.dumps(payload))
+
+        except Exception as e:
+            logger.error(f"[WebRTC] Combined data send error: {e}")
 
     def _setup_track_handlers(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("track")
