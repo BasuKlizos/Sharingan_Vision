@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from app.logger import logger
 from app.modules.signaling.websocket_manager import InMemoryConnectionManager
-from app.modules.signaling.service import SignalingService
+# from app.modules.signaling.service import SignalingService
 from app.modules.signaling.schemas import SignalMessage
 from app.common.exceptions import (
     SignalingError,
@@ -14,7 +14,7 @@ from app.common.exceptions import (
 router = APIRouter()
 
 manager = InMemoryConnectionManager()
-service = SignalingService(manager)
+# service = SignalingService(manager)
 
 
 @router.websocket("/ws/{room_id}")
