@@ -1,3 +1,5 @@
+from typing import Any
+
 import cv2
 import mediapipe as mp
 
@@ -14,8 +16,7 @@ class MediaPipeFaceDetector:
             refine_landmarks=True
         )
 
-    def detect(self, img):
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = self.face_mesh.process(rgb)
+    def detect(self, img: bytes) -> Any:
+        results = self.face_mesh.process(img)
         return results
 

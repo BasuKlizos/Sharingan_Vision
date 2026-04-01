@@ -57,6 +57,20 @@ class Settings(BaseSettings):
     YOLO_CONF_THRESHOLD: float = config("YOLO_CONF_THRESHOLD", cast=float, default=0.25)
     YOLO_MAX_WIDTH: int = config("YOLO_MAX_WIDTH", cast=int, default=640)
 
+    # Video Recording & Storage
+    ENABLE_VIDEO_RECORDING: bool = config("ENABLE_VIDEO_RECORDING", cast=bool, default=True)
+    VIDEO_RECORDING_DIR: str = config("VIDEO_RECORDING_DIR", default="./recordings")
+    VIDEO_RECORDING_FPS: int = config("VIDEO_RECORDING_FPS", cast=int, default=30)
+    
+    # S3 Upload Configuration
+    ENABLE_S3_UPLOAD: bool = config("ENABLE_S3_UPLOAD", cast=bool, default=False)
+    AWS_ACCESS_KEY_ID: str = config("AWS_ACCESS_KEY_ID", default="")
+    AWS_SECRET_ACCESS_KEY: str = config("AWS_SECRET_ACCESS_KEY", default="")
+    S3_BUCKET_NAME: str = config("S3_BUCKET_NAME", default="")
+    S3_REGION: str = config("S3_REGION", default="us-east-1")
+    S3_VIDEO_PREFIX: str = config("S3_VIDEO_PREFIX", default="videos")
+    S3_UPLOAD_CLEANUP_LOCAL: bool = config("S3_UPLOAD_CLEANUP_LOCAL", cast=bool, default=True)
+
 
 
 @lru_cache()
