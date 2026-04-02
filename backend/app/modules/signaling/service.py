@@ -17,6 +17,8 @@ from app.logger import logger
 # Global state trackers
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
 DETECTION_CHANNELS: Dict[str, DetectionDataChannelManager] = {}
+_CLEANUP_SCHEDULED: set = set()  # Track which sessions have cleanup scheduled to prevent double-cleanup
+_CLEANUP_SCHEDULED: set = set()  # Track which sessions have cleanup scheduled
 
 class WebRTCService:
     def __init__(self):
@@ -31,32 +33,6 @@ class WebRTCService:
             model_path=getattr(settings, "YOLO_MODEL_PATH", "yolov8n.pt"),
             conf_threshold=float(getattr(settings, "YOLO_CONF_THRESHOLD", 0.25)),
         )
-
-    def _should_process_frame(self, last_inference_ts: float, detection_fps: int) -> tuple[bool, float]:
-        """
-        Determine if current frame should be processed based on DETECTION_FPS.
-        
-        If DETECTION_FPS=1, process 1 frame per second.
-        If DETECTION_FPS=2, process 2 frames per second, etc.
-        
-        Args:
-            last_inference_ts: Timestamp of last processed frame
-            detection_fps: Target detection FPS from settings
-            
-        Returns:
-            Tuple of (should_process: bool, current_timestamp: float)
-        """
-        if detection_fps <= 0:
-            return True, last_inference_ts
-        
-        now = time.monotonic()
-        time_since_last = now - last_inference_ts
-        min_interval = 1.0 / detection_fps
-        
-        if time_since_last < min_interval:
-            return False, last_inference_ts
-        
-        return True, now
 
     def _calculate_crop_offset(self, img, crop_enabled: bool = False) -> Tuple[any, CropOffset]:
         """Apply cropping if enabled and return cropped image with offset info
@@ -128,27 +104,12 @@ class WebRTCService:
         enable_yolo = getattr(settings, "ENABLE_YOLO", False)
         enable_crop = getattr(settings, "ENABLE_CROP", False)
         
-        logger.info(
-            f"[Detection] Starting 2-task pipeline | session_id={session_id} "
-            f"detection_fps={detection_fps} yolo_enabled={enable_yolo} crop_enabled={enable_crop}"
-        )
-        
         # Initialize detectors
         yolo_detector = self._init_yolo_detector(session_id) if enable_yolo else None
         
         # Shared state between receiver and processor tasks
         latest_frame = None
-        frame_available = asyncio.Event()
         frame_lock = asyncio.Lock()
-        
-        # Statistics
-        stats = {
-            "frames_received": 0,
-            "frames_skipped": 0,
-            "frames_processed": 0,
-            "stats_start_time": time.monotonic(),
-        }
-        
         stop_processing = asyncio.Event()
 
         # ============================================
@@ -156,53 +117,26 @@ class WebRTCService:
         # ============================================
         async def receiver_task():
             nonlocal latest_frame
-            logger.info(f"[Receiver] Task started | session_id={session_id}")
-            frame_count = 0
             try:
                 while not stop_processing.is_set():
                     try:
-                        logger.debug(f"[Receiver] Waiting for frame (no timeout) | session_id={session_id} | frames_so_far={frame_count}")
                         # Don't use timeout - just wait for frame or let it fail naturally
                         frame = await track.recv()
-                        frame_count += 1
-                        stats["frames_received"] += 1
-                        
-                        logger.debug(
-                            f"[Receiver] Frame received | session_id={session_id} "
-                            f"frame_count={frame_count} total={stats['frames_received']}"
-                        )
                         
                         # Update latest frame (overwrite stale frame)
                         async with frame_lock:
-                            if latest_frame is not None:
-                                stats["frames_skipped"] += 1
-                                logger.debug(
-                                    f"[Receiver] Stale frame overwritten | session_id={session_id} "
-                                    f"skipped_total={stats['frames_skipped']}"
-                                )
                             latest_frame = frame
-                            frame_available.set()
                         
-                    except Exception as e:
-                        logger.info(
-                            f"[Receiver] track.recv() failed or track ended | session_id={session_id} | "
-                            f"error_type={type(e).__name__} error_msg={str(e)} | "
-                            f"frames_received_so_far={frame_count}"
-                        )
+                    except Exception:
                         break
                         
             except asyncio.CancelledError:
-                logger.info(f"[Receiver] Task cancelled | session_id={session_id} | frames_received={frame_count}")
+                pass
             except Exception as e:
-                logger.error(
-                    f"[Receiver] Unexpected error | session_id={session_id} | "
-                    f"error={type(e).__name__}:{e}"
-                )
+                logger.error(f"[Receiver] Unexpected error | session_id={session_id} | error={e}")
             finally:
-                logger.info(
-                    f"[Receiver] Task ended | session_id={session_id} | "
-                    f"final_frames_received={stats['frames_received']}"
-                )
+                # CRITICAL FIX #1: Stop processor when receiver exits
+                stop_processing.set()
         
         # ============================================
         # TASK 2: Frame Processor (periodic detection)
@@ -211,11 +145,6 @@ class WebRTCService:
             nonlocal latest_frame
             frame_id = 0
             interval = 1.0 / detection_fps
-            
-            logger.info(
-                f"[Processor] Task started | session_id={session_id} | "
-                f"detection_fps={detection_fps} interval={interval:.3f}s"
-            )
             
             try:
                 while not stop_processing.is_set():
@@ -227,43 +156,26 @@ class WebRTCService:
                         if latest_frame is not None:
                             frame = latest_frame
                             latest_frame = None
-                            frame_available.clear()
                     
                     # Process frame if available
                     if frame is not None:
                         try:
-                            logger.debug(f"[Processor] Processing frame {frame_id} | session_id={session_id}")
-                            
                             # Convert frame to OpenCV format (RGB)
-                            loop_start_convert = time.monotonic()
                             img = frame.to_ndarray(format="rgb24")
-                            convert_time = time.monotonic() - loop_start_convert
                             
                             # Apply cropping if enabled
                             img_to_process, crop_offset = self._calculate_crop_offset(
                                 img, crop_enabled=enable_crop
                             )
                             
-                            logger.debug(
-                                f"[Processor] Frame converted | session_id={session_id} "
-                                f"time={convert_time:.3f}s"
-                            )
-                            
                             # Run both MediaPipe and YOLO on the frame (concurrent)
                             async def detect_face():
-                                logger.debug(f"[MediaPipe] Starting detection | session_id={session_id}")
-                                mp_start = time.monotonic()
                                 face_results = await asyncio.to_thread(
                                     self.face_detector.detect,
                                     img_to_process
                                 )
-                                mp_time = time.monotonic() - mp_start
-                                logger.debug(
-                                    f"[MediaPipe] Detection complete | session_id={session_id} "
-                                    f"time={mp_time:.3f}s"
-                                )
+                                # FIX #4: Analyzer should be initialized once per session, not per-frame
                                 analyzer = self.face_analyzers.get(session_id)
-
                                 if not analyzer:
                                     analyzer = FaceAnalyzer()
                                     self.face_analyzers[session_id] = analyzer
@@ -274,80 +186,12 @@ class WebRTCService:
                                     session_id=session_id
                                 )
                                 
-                                # Log detailed face analysis results
-                                face_count = face_analysis.get("face_count", 0)
-                                alerts = face_analysis.get("alerts", [])
-                                faces_data = face_analysis.get("faces", [])
-                                
-                                logger.info(
-                                    f"[MediaPipe] Results | session_id={session_id} "
-                                    f"face_count={face_count} alerts={alerts} "
-                                    f"time={mp_time:.3f}s"
-                                )
-                                
-                                if faces_data:
-                                    for idx, face in enumerate(faces_data):
-                                        looking_away = face.get("looking_away", False)
-                                        eye_norm = face.get("eye_norm", [0, 0])
-                                        logger.debug(
-                                            f"[MediaPipe] Face {idx} | session_id={session_id} "
-                                            f"looking_away={looking_away} eye_norm={eye_norm}"
-                                        )
-                                
                                 return face_analysis
 
                             async def detect_yolo():
                                 if not yolo_detector:
                                     return []
-                                logger.debug(f"[YOLO] Starting detection | session_id={session_id}")
-                                yolo_start = time.monotonic()
                                 detections = await asyncio.to_thread(yolo_detector.detect, img_to_process)
-                                yolo_time = time.monotonic() - yolo_start
-                                logger.debug(
-                                    f"[YOLO] Detection complete | session_id={session_id} "
-                                    f"detections={len(detections)} time={yolo_time:.3f}s"
-                                )
-                                
-                                # Log detailed YOLO detection results
-                                if detections:
-                                    logger.info(
-                                        f"[YOLO] Results | session_id={session_id} "
-                                        f"total_detections={len(detections)}"
-                                    )
-                                    
-                                    # Group by class for summary
-                                    class_summary = {}
-                                    for det in detections:
-                                        class_name = det.class_name
-                                        if class_name not in class_summary:
-                                            class_summary[class_name] = []
-                                        class_summary[class_name].append({
-                                            "confidence": det.confidence,
-                                            "box": det.xyxy
-                                        })
-                                    
-                                    # Log summary by class
-                                    for class_name, boxes in class_summary.items():
-                                        confidences = [b["confidence"] for b in boxes]
-                                        avg_conf = sum(confidences) / len(confidences) if confidences else 0
-                                        logger.info(
-                                            f"[YOLO] Class {class_name} | session_id={session_id} "
-                                            f"count={len(boxes)} avg_confidence={avg_conf:.2f}"
-                                        )
-                                    
-                                    # Log detailed box info for each detection
-                                    for idx, det in enumerate(detections):
-                                        logger.debug(
-                                            f"[YOLO] Detection {idx} | session_id={session_id} "
-                                            f"class={det.class_name} confidence={det.confidence:.3f} "
-                                            f"box={det.xyxy}"
-                                        )
-                                else:
-                                    logger.info(
-                                        f"[YOLO] Results | session_id={session_id} "
-                                        f"total_detections=0"
-                                    )
-                                
                                 return detections
 
                             # Run detections in parallel
@@ -370,35 +214,13 @@ class WebRTCService:
                                 alerts.append("PERSON_PRESENT_NO_FACE")
 
                             face_analysis["alerts"] = list(set(alerts))
-                            
-                            inference_time = time.monotonic() - inference_start
-                            
-                            # Log combined analysis results
-                            logger.info(
-                                f"[Analytics] Combined results | session_id={session_id} "
-                                f"frame_id={frame_id} inference_time={inference_time:.3f}s | "
-                                f"face_count={face_count} yolo_count={person_count} "
-                                f"alerts={face_analysis['alerts']}"
-                            )
-                            
-                            logger.debug(
-                                f"[Processor] Detection pipeline complete | session_id={session_id} "
-                                f"face_alerts={len(face_analysis.get('alerts', []))} "
-                                f"yolo_detections={len(yolo_detections)} time={inference_time:.3f}s"
-                            )
 
                             # Send results to frontend
-                            send_start = time.monotonic()
                             self._send_combined_results(
                                 session_id, frame_id, face_analysis, yolo_detections, crop_offset
                             )
-                            send_time = time.monotonic() - send_start
-                            logger.debug(
-                                f"[Processor] Results sent | session_id={session_id} time={send_time:.3f}s"
-                            )
                             
                             frame_id += 1
-                            stats["frames_processed"] += 1
                             
                         except Exception as e:
                             logger.error(
@@ -410,26 +232,7 @@ class WebRTCService:
                         # Stats will show incoming_fps=0 if this persists
                         pass
                     
-                    # Print statistics every 1 second
-                    now = time.monotonic()
-                    elapsed = now - stats["stats_start_time"]
-                    if elapsed >= 1.0:
-                        incoming_fps = stats["frames_received"] / elapsed
-                        processing_fps = stats["frames_processed"] / elapsed
-                        
-                        logger.info(
-                            f"[Pipeline] Statistics | session_id={session_id} | "
-                            f"incoming_fps={incoming_fps:.1f} | "
-                            f"processing_fps={processing_fps:.1f}/{detection_fps} | "
-                            f"frames_processed={stats['frames_processed']} | "
-                            f"frames_skipped={stats['frames_skipped']}"
-                        )
-                        
-                        # Reset counters
-                        stats["frames_received"] = 0
-                        stats["frames_processed"] = 0
-                        stats["frames_skipped"] = 0
-                        stats["stats_start_time"] = now
+
                     
                     # Sleep until next processing interval
                     loop_end = time.monotonic()
@@ -440,9 +243,9 @@ class WebRTCService:
                         await asyncio.sleep(sleep_time)
                         
             except asyncio.CancelledError:
-                logger.info(f"[Processor] Task cancelled | session_id={session_id}")
+                pass
             except Exception as e:
-                logger.error(f"[Processor] Error in processor task | session_id={session_id} error={e}")
+                logger.error(f"[Processor] Error | session_id={session_id} | error={e}")
         
         # ============================================
         # Run both tasks concurrently
@@ -450,16 +253,26 @@ class WebRTCService:
         receiver = asyncio.create_task(receiver_task())
         processor = asyncio.create_task(processor_task())
         
-        logger.info(
-            f"[Detection] Both tasks started | session_id={session_id} | "
-            f"receiver_task_id={id(receiver)} processor_task_id={id(processor)}"
-        )
-        
         try:
-            # Wait for tasks to complete (until one fails or connection closes)
-            await asyncio.gather(receiver, processor)
+            # FIX #2: Use asyncio.wait with FIRST_COMPLETED for better error handling
+            # If one task fails, cancel the other instead of waiting for both
+            done, pending = await asyncio.wait(
+                {receiver, processor},
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # One of the tasks completed - check if it's an error
+            for task in done:
+                try:
+                    await task
+                except Exception as e:
+                    logger.error(f"[Detection] Task failed with error | session_id={session_id} error={e}")
+                    # Cancel all pending tasks
+                    for pending_task in pending:
+                        pending_task.cancel()
+                    raise
+                    
         except asyncio.CancelledError:
-            logger.info(f"[Detection] Pipeline cancelled | session_id={session_id}")
             stop_processing.set()
             receiver.cancel()
             processor.cancel()
@@ -470,10 +283,15 @@ class WebRTCService:
         except Exception as e:
             logger.error(f"[Detection] Pipeline error | session_id={session_id} error={e}")
             stop_processing.set()
+            # Ensure both tasks are cancelled
+            receiver.cancel()
+            processor.cancel()
+            try:
+                await asyncio.gather(receiver, processor, return_exceptions=True)
+            except:
+                pass
         finally:
-            logger.info(f"[Detection] Pipeline shutdown | session_id={session_id} "
-                       f"final_processed={stats['frames_processed']} "
-                       f"final_skipped={stats['frames_skipped']}")
+            pass
 
     def _send_combined_results(
         self,
@@ -486,9 +304,6 @@ class WebRTCService:
         """Send detection results (MediaPipe + YOLO) to frontend via WebRTC data channel."""
         raw_channel = self.data_channels.get(session_id)
         if not raw_channel:
-            logger.debug(
-                f"[Send] No channel available | session_id={session_id} frame_id={frame_id}"
-            )
             return
 
         try:
@@ -514,51 +329,32 @@ class WebRTCService:
                 "crop_offset": frame_dict.get("crop_offset", {}),
             }
 
-            # Log payload structure before sending
-            payload_size = len(json.dumps(payload))
-            logger.debug(
-                f"[Send] Payload | session_id={session_id} frame_id={frame_id} "
-                f"payload_size={payload_size}bytes "
-                f"face_count={payload['face'].get('face_count', 0)} "
-                f"yolo_count={payload['yolo']['detection_count']}"
-            )
-
             raw_channel.send(json.dumps(payload))
-            
-            logger.debug(
-                f"[Send] Sent successfully | session_id={session_id} frame_id={frame_id}"
-            )
 
         except Exception as e:
-            logger.error(
-                f"[Send] Failed to send results | session_id={session_id} frame_id={frame_id} "
-                f"error={type(e).__name__}:{e}"
-            )
+            logger.error(f"[Send] Failed | session_id={session_id} error={e}")
 
 
     def _setup_track_handlers(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("track")
         def on_track(track):
             if track.kind == "video":
-                logger.info(f"[Detection] Video track started | session_id={session_id} kind={track.kind}")
                 track.task = asyncio.create_task(self._process_video_track(track, session_id))
 
             @track.on("ended")
             async def on_ended():
-                logger.info(f"[Detection] Video track ended | session_id={session_id}")
                 # Cancel the processing task to prevent resource leak
                 if hasattr(track, 'task') and track.task:
                     track.task.cancel()
                     try:
                         await track.task
                     except asyncio.CancelledError:
-                        logger.debug(f"[Detection] Video track task cancelled | session_id={session_id}")
+                        pass
 
     def _setup_datachannel_handler(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("datachannel")
         def on_datachannel(channel):
             if channel.label == "detections":
-                logger.info(f"[WebRTC] Data channel established | session_id={session_id} label={channel.label}")
                 manager = DetectionDataChannelManager(session_id)
                 manager.set_channel(channel)
                 DETECTION_CHANNELS[session_id] = manager
@@ -566,10 +362,11 @@ class WebRTCService:
 
         @pc.on("connectionstatechange")
         def on_connectionstatechange():
-            logger.debug(f"[WebRTC] Connection state | session_id={session_id} state={pc.connectionState}")
             if pc.connectionState in ["failed", "closed"]:
-                logger.info(f"[WebRTC] Connection ended | session_id={session_id} state={pc.connectionState}")
-                pc.cleanup_task = asyncio.create_task(self._cleanup(session_id))
+                # FIX #9: Prevent double cleanup by checking if already scheduled
+                if session_id not in _CLEANUP_SCHEDULED:
+                    _CLEANUP_SCHEDULED.add(session_id)
+                    asyncio.create_task(self._cleanup(session_id))
                 
     async def handle_offer(self, sdp: str, type: str):
         session_id = generate_session_id()
@@ -595,13 +392,19 @@ class WebRTCService:
     async def _cleanup(self, session_id: str):
         """Clean up session resources."""
         pc = PEER_CONNECTIONS.pop(session_id, None)
-        DETECTION_CHANNELS.pop(session_id, None)
+        # FIX #5/#6: Properly cleanup the manager and call its cleanup method
+        manager = DETECTION_CHANNELS.pop(session_id, None)
         self.data_channels.pop(session_id, None)
         analyzer = self.face_analyzers.pop(session_id, None)
 
+        # Call manager.cleanup() before discarding
+        if manager:
+            try:
+                await manager.cleanup()
+            except Exception as e:
+                logger.error(f"[DetectionChannel] Cleanup failed | session_id={session_id} | error={e}")
+
         if pc:
             await pc.close()
-            logger.info(f"[WebRTC] Session cleanup complete | session_id={session_id}")
         if analyzer:
-            logger.info(f"[Analyzer] Resetting analyzer state | session_id={session_id}")
             analyzer.reset()
