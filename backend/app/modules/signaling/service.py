@@ -207,10 +207,10 @@ class WebRTCService:
 
             except asyncio.CancelledError:
                 logger.info(f"[Detection] Processing cancelled | session_id={session_id}")
-                break
+                raise
             except Exception as e:
                 logger.error(f"[Detection] Error during processing | session_id={session_id} error={e}")
-                break
+                raise
 
     def _send_combined_results(
         self,
@@ -279,8 +279,8 @@ class WebRTCService:
             logger.debug(f"[WebRTC] Connection state | session_id={session_id} state={pc.connectionState}")
             if pc.connectionState in ["failed", "closed"]:
                 logger.info(f"[WebRTC] Connection ended | session_id={session_id} state={pc.connectionState}")
-                asyncio.create_task(self._cleanup(session_id))
-
+                pc.cleanup_task = asyncio.create_task(self._cleanup(session_id))
+                
     async def handle_offer(self, sdp: str, type: str):
         session_id = generate_session_id()
         pc = RTCPeerConnection()
