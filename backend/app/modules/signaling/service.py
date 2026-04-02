@@ -22,7 +22,7 @@ class WebRTCService:
     def __init__(self):
         # Initialize detectors once at service level or per session
         self.face_detector = MediaPipeFaceDetector()
-        self.face_analyzer = FaceAnalyzer()
+        self.face_analyzers = {}
         self.data_channels = {}  # Direct references to aiortc channels
 
     def _init_yolo_detector(self, session_id: str):
@@ -262,8 +262,16 @@ class WebRTCService:
                                     f"[MediaPipe] Detection complete | session_id={session_id} "
                                     f"time={mp_time:.3f}s"
                                 )
-                                return self.face_analyzer.analyze(
-                                    face_results, img_to_process.shape, session_id=session_id
+                                analyzer = self.face_analyzers.get(session_id)
+
+                                if not analyzer:
+                                    analyzer = FaceAnalyzer()
+                                    self.face_analyzers[session_id] = analyzer
+
+                                return analyzer.analyze(
+                                    face_results,
+                                    img_to_process.shape,
+                                    session_id=session_id
                                 )
 
                             async def detect_yolo():
@@ -459,6 +467,7 @@ class WebRTCService:
                 
     async def handle_offer(self, sdp: str, type: str):
         session_id = generate_session_id()
+        self.face_analyzers[session_id] = FaceAnalyzer()
         pc = RTCPeerConnection()
         PEER_CONNECTIONS[session_id] = pc
 
@@ -482,7 +491,11 @@ class WebRTCService:
         pc = PEER_CONNECTIONS.pop(session_id, None)
         DETECTION_CHANNELS.pop(session_id, None)
         self.data_channels.pop(session_id, None)
+        analyzer = self.face_analyzers.pop(session_id, None)
 
         if pc:
             await pc.close()
             logger.info(f"[WebRTC] Session cleanup complete | session_id={session_id}")
+        if analyzer:
+            logger.info(f"[Analyzer] Resetting analyzer state | session_id={session_id}")
+            analyzer.reset()

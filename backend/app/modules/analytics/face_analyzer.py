@@ -1,107 +1,217 @@
+from __future__ import annotations
+
+from typing import Any
+
 from app.logger import logger
+
 
 class FaceAnalyzer:
     """
-    Analysis layer → converts landmarks into behavior insights
+    Analysis layer that converts a single MediaPipe face result
+    into stable behavioral signals for downstream decision making.
     """
 
-    def __init__(self):
-        # State for smoothing & stability
-        self.prev_states = {}
+    LEFT_EYE_IDX = 33
+    RIGHT_EYE_IDX = 263
+
+    def __init__(
+        self,
+        no_face_buffer_frames: int = 3,
+        off_center_threshold: float = 0.12,
+        off_center_hold_frames: int = 3,
+        center_recover_frames: int = 2,
+    ):
+        """
+        Args:
+            no_face_buffer_frames: Number of consecutive missed frames before emitting NO_FACE.
+            off_center_threshold: Threshold for horizontal face-center deviation.
+            off_center_hold_frames: Number of consecutive suspicious frames before alerting.
+            center_recover_frames: Number of consecutive normal frames before clearing off-center state.
+        """
+        self.no_face_buffer_frames = max(1, int(no_face_buffer_frames))
+        self.off_center_threshold = float(off_center_threshold)
+        self.off_center_hold_frames = max(1, int(off_center_hold_frames))
+        self.center_recover_frames = max(1, int(center_recover_frames))
+
+        self.no_face_counter = 0
+        self.off_center_counter = 0
+        self.center_counter = 0
+        self.off_center_active = False
+
+    def analyze(self, results: Any, img_shape: Any, session_id: str | None = None) -> dict:
+        """
+        Convert MediaPipe result into stable face analytics.
+
+        Args:
+            results: Raw MediaPipe FaceMesh result object.
+            img_shape: Image shape tuple, expected like (H, W, C).
+            session_id: Optional session identifier for logging.
+
+        Returns:
+            Dict with alerts, faces list, and face_count.
+        """
+        try:
+            h, w = self._extract_image_size(img_shape)
+        except ValueError as exc:
+            logger.error(
+                f"[Analyzer] Invalid image shape | session_id={session_id} "
+                f"img_shape={img_shape} error={exc}"
+            )
+            return self._empty_response(alerts=["ANALYZER_ERROR"])
+
+        if not self._has_face(results):
+            return self._handle_no_face(session_id=session_id)
+
         self.no_face_counter = 0
 
-    def analyze(self, results, img_shape, session_id=None):
-        alerts = []
-        faces_data = []
+        face_landmarks = results.multi_face_landmarks[0]
 
-        # 1. NO FACE HANDLING (BUFFERED)
-        if not results.multi_face_landmarks:
-            self.no_face_counter += 1
+        left_eye = self._safe_landmark(face_landmarks, self.LEFT_EYE_IDX)
+        right_eye = self._safe_landmark(face_landmarks, self.RIGHT_EYE_IDX)
 
-            # Avoid flicker for 1–2 missed frames
-            if self.no_face_counter < 3:
-                return {
-                    "alerts": [],
-                    "faces": [],
-                    "face_count": 0
-                }
-
-            logger.debug(f"[Analyzer] No face detected | session_id={session_id}")
+        if left_eye is None or right_eye is None:
+            logger.warning(
+                f"[Analyzer] Required eye landmarks missing | session_id={session_id} "
+                f"left_eye_missing={left_eye is None} right_eye_missing={right_eye is None}"
+            )
             return {
-                "alerts": ["NO_FACE"],
+                "alerts": ["LANDMARKS_INCOMPLETE"],
                 "faces": [],
-                "face_count": 0
+                "face_count": 1,
             }
 
-        # Reset counter when face detected
-        self.no_face_counter = 0
+        eye_center_x = self._clamp01((left_eye.x + right_eye.x) / 2.0)
+        eye_center_y = self._clamp01((left_eye.y + right_eye.y) / 2.0)
 
-        face_count = len(results.multi_face_landmarks)
+        eye_x_px = self._to_pixel(eye_center_x, w)
+        eye_y_px = self._to_pixel(eye_center_y, h)
+
+        center_offset = abs(eye_center_x - 0.5)
+        off_center_raw = center_offset > self.off_center_threshold
+        off_center = self._smooth_off_center(off_center_raw)
+
+        alerts: list[str] = []
+        if off_center:
+            alerts.append("HEAD_OFF_CENTER")
 
         logger.debug(
-            f"[Analyzer] Faces detected: {face_count} | session_id={session_id}"
+            f"[Analyzer] Face analyzed | session_id={session_id} "
+            f"off_center={off_center} raw={off_center_raw} offset={center_offset:.4f} "
+            f"eye_norm=({eye_center_x:.4f},{eye_center_y:.4f}) "
+            f"eye_px=({eye_x_px},{eye_y_px}) "
+            f"no_face_counter={self.no_face_counter} "
+            f"off_center_counter={self.off_center_counter} "
+            f"center_counter={self.center_counter}"
         )
 
-        # 2. MULTIPLE FACES CHECK
-        if 1 < face_count <= 2:
-            alerts.append("MULTIPLE_FACES")
-
-        h, w, _ = img_shape
-
-        # 3. PROCESS EACH FACE
-        for idx, face_landmarks in enumerate(results.multi_face_landmarks):
-
-            # Use EYES instead of nose (more stable)
-            LEFT_EYE = 33
-            RIGHT_EYE = 263
-
-            left_eye = face_landmarks.landmark[LEFT_EYE]
-            right_eye = face_landmarks.landmark[RIGHT_EYE]
-
-            # Center of eyes
-            eye_center_x = (left_eye.x + right_eye.x) / 2
-            eye_center_y = (left_eye.y + right_eye.y) / 2
-
-            # Convert to pixel
-            eye_x_px = int(eye_center_x * w)
-            eye_y_px = int(eye_center_y * h)
-
-            # 4. LOOKING AWAY LOGIC (IMPROVED
-            center_offset = abs(eye_center_x - 0.5)
-
-            # threshold tuned for stability
-            looking_away_raw = center_offset > 0.12
-
-            # 5. SMOOTHING (ANTI-FLICKER)
-            prev_state = self.prev_states.get(idx, False)
-
-            # simple debounce
-            if looking_away_raw != prev_state:
-                looking_away = prev_state
-            else:
-                looking_away = looking_away_raw
-
-            self.prev_states[idx] = looking_away
-
-            if looking_away:
-                alerts.append("LOOKING_AWAY")
-
-            logger.debug(
-                f"[Analyzer] Face {idx+1} | looking_away={looking_away} "
-                f"| offset={center_offset:.2f} "
-                f"| eye_px=({eye_x_px},{eye_y_px}) "
-                f"| session_id={session_id}"
-            )
-
-            faces_data.append({
-                "looking_away": looking_away,
-                "eye_norm": (float(eye_center_x), float(eye_center_y)),
-                "eye_px": (eye_x_px, eye_y_px)
-            })
-
-        # 6. FINAL RESPONSE
         return {
-            "alerts": list(set(alerts)),
-            "faces": faces_data,
-            "face_count": face_count
+            "alerts": alerts,
+            "faces": [
+                {
+                    "off_center": off_center,
+                    "off_center_raw": off_center_raw,
+                    "center_offset": round(float(center_offset), 4),
+                    "eye_norm": (float(eye_center_x), float(eye_center_y)),
+                    "eye_px": (eye_x_px, eye_y_px),
+                }
+            ],
+            "face_count": 1,
+        }
+
+    def reset(self) -> None:
+        """
+        Reset analyzer temporal state. Useful when a session ends.
+        """
+        self.no_face_counter = 0
+        self.off_center_counter = 0
+        self.center_counter = 0
+        self.off_center_active = False
+
+    def _handle_no_face(self, session_id: str | None = None) -> dict:
+        self.no_face_counter += 1
+
+        if self.no_face_counter < self.no_face_buffer_frames:
+            logger.debug(
+                f"[Analyzer] Temporary face miss suppressed | session_id={session_id} "
+                f"no_face_counter={self.no_face_counter}/{self.no_face_buffer_frames}"
+            )
+            return self._empty_response()
+
+        self.off_center_counter = 0
+        self.center_counter = 0
+        self.off_center_active = False
+
+        logger.debug(
+            f"[Analyzer] No face detected | session_id={session_id} "
+            f"no_face_counter={self.no_face_counter}"
+        )
+        return self._empty_response(alerts=["NO_FACE"])
+
+    def _smooth_off_center(self, off_center_raw: bool) -> bool:
+        if off_center_raw:
+            self.off_center_counter += 1
+            self.center_counter = 0
+
+            if self.off_center_counter >= self.off_center_hold_frames:
+                self.off_center_active = True
+        else:
+            self.center_counter += 1
+            self.off_center_counter = 0
+
+            if self.center_counter >= self.center_recover_frames:
+                self.off_center_active = False
+
+        return self.off_center_active
+
+    @staticmethod
+    def _has_face(results: Any) -> bool:
+        return bool(
+            results is not None
+            and hasattr(results, "multi_face_landmarks")
+            and results.multi_face_landmarks
+        )
+
+    @staticmethod
+    def _safe_landmark(face_landmarks: Any, index: int) -> Any | None:
+        try:
+            if face_landmarks is None or not hasattr(face_landmarks, "landmark"):
+                return None
+            if index < 0 or index >= len(face_landmarks.landmark):
+                return None
+            return face_landmarks.landmark[index]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_image_size(img_shape: Any) -> tuple[int, int]:
+        if not isinstance(img_shape, tuple) or len(img_shape) < 2:
+            raise ValueError("img_shape must be a tuple like (H, W, C)")
+
+        h, w = img_shape[:2]
+
+        if not isinstance(h, int) or not isinstance(w, int):
+            raise ValueError("height and width must be integers")
+
+        if h <= 0 or w <= 0:
+            raise ValueError("height and width must be > 0")
+
+        return h, w
+
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @staticmethod
+    def _to_pixel(norm_value: float, size: int) -> int:
+        if size <= 0:
+            return 0
+        px = int(norm_value * size)
+        return max(0, min(size - 1, px))
+
+    @staticmethod
+    def _empty_response(alerts: list[str] | None = None) -> dict:
+        return {
+            "alerts": alerts or [],
+            "faces": [],
+            "face_count": 0,
         }
