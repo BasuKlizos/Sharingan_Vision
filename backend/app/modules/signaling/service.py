@@ -103,114 +103,283 @@ class WebRTCService:
 
     async def _process_video_track(self, track, session_id: str):
         """
-        Process video track with frame throttling for both MediaPipe and YOLO.
+        Real-time detection pipeline with 2-task architecture:
         
-        Throttles incoming frames based on DETECTION_FPS:
-        - All incoming frames are tracked
-        - Only DETECTION_FPS frames per second trigger detection (MediaPipe + YOLO)
-        - Results are sent to frontend for each processed frame
+        Task 1 (Receiver):
+        - Continuously receives frames from WebRTC track
+        - Stores only the latest frame in memory
+        - Old unprocessed frames are automatically dropped
+        - Runs independently at WebRTC frame rate (~30 FPS from browser)
+        
+        Task 2 (Processor):  
+        - Runs periodically at configured DETECTION_FPS (e.g., 1, 2, 5, 10)
+        - Grabs the latest available frame
+        - Runs MediaPipe + YOLO in parallel
+        - Sends results to frontend
+        - Skips if no new frame is available
+        
+        This ensures:
+        - Fresh frames are always processed (not old stale ones)
+        - No buildup of frame queues
+        - Receiver never blocks
+        - Proper real-time analytics behavior
         """
         detection_fps = int(getattr(settings, "DETECTION_FPS", 10))
         enable_yolo = getattr(settings, "ENABLE_YOLO", False)
         enable_crop = getattr(settings, "ENABLE_CROP", False)
         
         logger.info(
-            f"[Detection] Start processing | session_id={session_id} "
+            f"[Detection] Starting 2-task pipeline | session_id={session_id} "
             f"detection_fps={detection_fps} yolo_enabled={enable_yolo} crop_enabled={enable_crop}"
         )
         
         # Initialize detectors
         yolo_detector = self._init_yolo_detector(session_id) if enable_yolo else None
         
-        # Frame tracking
-        last_inference_ts = 0.0
-        frame_id = 0
-        total_frames = 0
-        processed_frames = 0
-        skipped_frames = 0
-        stats_start_time = time.monotonic()
+        # Shared state between receiver and processor tasks
+        latest_frame = None
+        frame_available = asyncio.Event()
+        frame_lock = asyncio.Lock()
+        
+        # Statistics
+        stats = {
+            "frames_received": 0,
+            "frames_skipped": 0,
+            "frames_processed": 0,
+            "stats_start_time": time.monotonic(),
+        }
+        
+        stop_processing = asyncio.Event()
 
-        while True:
+        # ============================================
+        # TASK 1: Frame Receiver (continuous drain)
+        # ============================================
+        async def receiver_task():
+            nonlocal latest_frame
+            logger.info(f"[Receiver] Task started | session_id={session_id}")
+            frame_count = 0
             try:
-                frame = await track.recv()
-                total_frames += 1
-                
-                # Check if this frame should be processed (frame throttling)
-                should_process, last_inference_ts = self._should_process_frame(
-                    last_inference_ts, detection_fps
-                )
-                
-                if not should_process:
-                    skipped_frames += 1
-                    continue
-                
-                # Frame will be processed - increment counter
-                processed_frames += 1
-
-                # Convert frame to OpenCV format (RGB)
-                img = frame.to_ndarray(format="rgb24")
-                
-                # Apply cropping if enabled
-                img_to_process, crop_offset = self._calculate_crop_offset(
-                    img, crop_enabled=enable_crop
-                )
-                
-                # Run both MediaPipe and YOLO on the throttled frame (concurrently)
-                async def detect_face():
-                    """MediaPipe face detection and analysis"""
-                    face_results = await asyncio.to_thread(
-                        self.face_detector.detect,
-                        img_to_process
-                    )
-                    return self.face_analyzer.analyze(
-                        face_results, img_to_process.shape, session_id=session_id
-                    )
-
-                async def detect_yolo():
-                    """YOLO object detection"""
-                    if yolo_detector:
-                        return await asyncio.to_thread(yolo_detector.detect, img_to_process)
-                    return []
-
-                # Run detections in parallel (MediaPipe + YOLO)
-                face_analysis, yolo_detections = await asyncio.gather(
-                    detect_face(),
-                    detect_yolo()
-                )
-
-                # Send results to frontend
-                self._send_combined_results(
-                    session_id, frame_id, face_analysis, yolo_detections, crop_offset
-                )
-
-                frame_id += 1
-                
-                # Print statistics every second
-                now = time.monotonic()
-                if now - stats_start_time >= 1.0:
-                    incoming_fps = total_frames / (now - stats_start_time)
-                    actual_processing_fps = processed_frames / (now - stats_start_time)
-
-                    logger.info(
-                        f"[Stats] session={session_id} | "
-                        f"incoming_fps={incoming_fps:.1f} | "
-                        f"processing_fps={actual_processing_fps:.1f}/{detection_fps} | "
-                        f"frames_processed={processed_frames} | "
-                        f"frames_skipped={skipped_frames}"
-                    )
-
-                    # Reset counters
-                    total_frames = 0
-                    processed_frames = 0
-                    skipped_frames = 0
-                    stats_start_time = now
-
+                while not stop_processing.is_set():
+                    try:
+                        logger.debug(f"[Receiver] Waiting for frame (no timeout) | session_id={session_id} | frames_so_far={frame_count}")
+                        # Don't use timeout - just wait for frame or let it fail naturally
+                        frame = await track.recv()
+                        frame_count += 1
+                        stats["frames_received"] += 1
+                        
+                        logger.debug(
+                            f"[Receiver] Frame received | session_id={session_id} "
+                            f"frame_count={frame_count} total={stats['frames_received']}"
+                        )
+                        
+                        # Update latest frame (overwrite stale frame)
+                        async with frame_lock:
+                            if latest_frame is not None:
+                                stats["frames_skipped"] += 1
+                                logger.debug(
+                                    f"[Receiver] Stale frame overwritten | session_id={session_id} "
+                                    f"skipped_total={stats['frames_skipped']}"
+                                )
+                            latest_frame = frame
+                            frame_available.set()
+                        
+                    except Exception as e:
+                        logger.info(
+                            f"[Receiver] track.recv() failed or track ended | session_id={session_id} | "
+                            f"error_type={type(e).__name__} error_msg={str(e)} | "
+                            f"frames_received_so_far={frame_count}"
+                        )
+                        break
+                        
             except asyncio.CancelledError:
-                logger.info(f"[Detection] Processing cancelled | session_id={session_id}")
-                raise
+                logger.info(f"[Receiver] Task cancelled | session_id={session_id} | frames_received={frame_count}")
             except Exception as e:
-                logger.error(f"[Detection] Error during processing | session_id={session_id} error={e}")
-                raise
+                logger.error(
+                    f"[Receiver] Unexpected error | session_id={session_id} | "
+                    f"error={type(e).__name__}:{e}"
+                )
+            finally:
+                logger.info(
+                    f"[Receiver] Task ended | session_id={session_id} | "
+                    f"final_frames_received={stats['frames_received']}"
+                )
+        
+        # ============================================
+        # TASK 2: Frame Processor (periodic detection)
+        # ============================================
+        async def processor_task():
+            nonlocal latest_frame
+            frame_id = 0
+            interval = 1.0 / detection_fps
+            
+            logger.info(
+                f"[Processor] Task started | session_id={session_id} | "
+                f"detection_fps={detection_fps} interval={interval:.3f}s"
+            )
+            
+            try:
+                while not stop_processing.is_set():
+                    loop_start = time.monotonic()
+                    
+                    # Grab latest frame if available
+                    frame = None
+                    async with frame_lock:
+                        if latest_frame is not None:
+                            frame = latest_frame
+                            latest_frame = None
+                            frame_available.clear()
+                    
+                    # Process frame if available
+                    if frame is not None:
+                        try:
+                            logger.debug(f"[Processor] Processing frame {frame_id} | session_id={session_id}")
+                            
+                            # Convert frame to OpenCV format (RGB)
+                            loop_start_convert = time.monotonic()
+                            img = frame.to_ndarray(format="rgb24")
+                            convert_time = time.monotonic() - loop_start_convert
+                            
+                            # Apply cropping if enabled
+                            img_to_process, crop_offset = self._calculate_crop_offset(
+                                img, crop_enabled=enable_crop
+                            )
+                            
+                            logger.debug(
+                                f"[Processor] Frame converted | session_id={session_id} "
+                                f"time={convert_time:.3f}s"
+                            )
+                            
+                            # Run both MediaPipe and YOLO on the frame (concurrent)
+                            async def detect_face():
+                                logger.debug(f"[MediaPipe] Starting detection | session_id={session_id}")
+                                mp_start = time.monotonic()
+                                face_results = await asyncio.to_thread(
+                                    self.face_detector.detect,
+                                    img_to_process
+                                )
+                                mp_time = time.monotonic() - mp_start
+                                logger.debug(
+                                    f"[MediaPipe] Detection complete | session_id={session_id} "
+                                    f"time={mp_time:.3f}s"
+                                )
+                                return self.face_analyzer.analyze(
+                                    face_results, img_to_process.shape, session_id=session_id
+                                )
+
+                            async def detect_yolo():
+                                if not yolo_detector:
+                                    return []
+                                logger.debug(f"[YOLO] Starting detection | session_id={session_id}")
+                                yolo_start = time.monotonic()
+                                detections = await asyncio.to_thread(yolo_detector.detect, img_to_process)
+                                yolo_time = time.monotonic() - yolo_start
+                                logger.debug(
+                                    f"[YOLO] Detection complete | session_id={session_id} "
+                                    f"detections={len(detections)} time={yolo_time:.3f}s"
+                                )
+                                return detections
+
+                            # Run detections in parallel
+                            inference_start = time.monotonic()
+                            face_analysis, yolo_detections = await asyncio.gather(
+                                detect_face(),
+                                detect_yolo()
+                            )
+                            inference_time = time.monotonic() - inference_start
+                            
+                            logger.debug(
+                                f"[Processor] Detection pipeline complete | session_id={session_id} "
+                                f"face_alerts={len(face_analysis.get('alerts', []) if face_analysis else [])} "
+                                f"yolo_detections={len(yolo_detections)} time={inference_time:.3f}s"
+                            )
+
+                            # Send results to frontend
+                            send_start = time.monotonic()
+                            self._send_combined_results(
+                                session_id, frame_id, face_analysis, yolo_detections, crop_offset
+                            )
+                            send_time = time.monotonic() - send_start
+                            logger.debug(
+                                f"[Processor] Results sent | session_id={session_id} time={send_time:.3f}s"
+                            )
+                            
+                            frame_id += 1
+                            stats["frames_processed"] += 1
+                            
+                        except Exception as e:
+                            logger.error(
+                                f"[Processor] Error processing frame | session_id={session_id} "
+                                f"frame_id={frame_id} error={e}"
+                            )
+                    else:
+                        # Frame not available - this is normal if receiver hasn't sent any yet
+                        # Stats will show incoming_fps=0 if this persists
+                        pass
+                    
+                    # Print statistics every 1 second
+                    now = time.monotonic()
+                    elapsed = now - stats["stats_start_time"]
+                    if elapsed >= 1.0:
+                        incoming_fps = stats["frames_received"] / elapsed
+                        processing_fps = stats["frames_processed"] / elapsed
+                        
+                        logger.info(
+                            f"[Pipeline] Statistics | session_id={session_id} | "
+                            f"incoming_fps={incoming_fps:.1f} | "
+                            f"processing_fps={processing_fps:.1f}/{detection_fps} | "
+                            f"frames_processed={stats['frames_processed']} | "
+                            f"frames_skipped={stats['frames_skipped']}"
+                        )
+                        
+                        # Reset counters
+                        stats["frames_received"] = 0
+                        stats["frames_processed"] = 0
+                        stats["frames_skipped"] = 0
+                        stats["stats_start_time"] = now
+                    
+                    # Sleep until next processing interval
+                    loop_end = time.monotonic()
+                    loop_time = loop_end - loop_start
+                    sleep_time = max(0, interval - loop_time)
+                    
+                    if sleep_time > 0:
+                        await asyncio.sleep(sleep_time)
+                        
+            except asyncio.CancelledError:
+                logger.info(f"[Processor] Task cancelled | session_id={session_id}")
+            except Exception as e:
+                logger.error(f"[Processor] Error in processor task | session_id={session_id} error={e}")
+        
+        # ============================================
+        # Run both tasks concurrently
+        # ============================================
+        receiver = asyncio.create_task(receiver_task())
+        processor = asyncio.create_task(processor_task())
+        
+        logger.info(
+            f"[Detection] Both tasks started | session_id={session_id} | "
+            f"receiver_task_id={id(receiver)} processor_task_id={id(processor)}"
+        )
+        
+        try:
+            # Wait for tasks to complete (until one fails or connection closes)
+            await asyncio.gather(receiver, processor)
+        except asyncio.CancelledError:
+            logger.info(f"[Detection] Pipeline cancelled | session_id={session_id}")
+            stop_processing.set()
+            receiver.cancel()
+            processor.cancel()
+            try:
+                await asyncio.gather(receiver, processor, return_exceptions=True)
+            except:
+                pass
+        except Exception as e:
+            logger.error(f"[Detection] Pipeline error | session_id={session_id} error={e}")
+            stop_processing.set()
+        finally:
+            logger.info(f"[Detection] Pipeline shutdown | session_id={session_id} "
+                       f"final_processed={stats['frames_processed']} "
+                       f"final_skipped={stats['frames_skipped']}")
 
     def _send_combined_results(
         self,
@@ -263,6 +432,13 @@ class WebRTCService:
             @track.on("ended")
             async def on_ended():
                 logger.info(f"[Detection] Video track ended | session_id={session_id}")
+                # Cancel the processing task to prevent resource leak
+                if hasattr(track, 'task') and track.task:
+                    track.task.cancel()
+                    try:
+                        await track.task
+                    except asyncio.CancelledError:
+                        logger.debug(f"[Detection] Video track task cancelled | session_id={session_id}")
 
     def _setup_datachannel_handler(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("datachannel")
