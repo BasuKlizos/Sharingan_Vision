@@ -195,7 +195,6 @@ class WebRTCService:
                                 return detections
 
                             # Run detections in parallel
-                            inference_start = time.monotonic()
                             face_analysis, yolo_detections = await asyncio.gather(
                                 detect_face(),
                                 detect_yolo()
@@ -207,8 +206,6 @@ class WebRTCService:
 
                             if person_count > 1:
                                 alerts.append("MULTIPLE_PERSONS")
-                            elif person_count > face_count:
-                                alerts.append("EXTRA_PERSON_DETECTED")
 
                             if person_count >= 1 and face_count == 0:
                                 alerts.append("PERSON_PRESENT_NO_FACE")
