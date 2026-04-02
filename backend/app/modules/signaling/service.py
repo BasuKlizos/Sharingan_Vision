@@ -268,11 +268,33 @@ class WebRTCService:
                                     analyzer = FaceAnalyzer()
                                     self.face_analyzers[session_id] = analyzer
 
-                                return analyzer.analyze(
+                                face_analysis = analyzer.analyze(
                                     face_results,
                                     img_to_process.shape,
                                     session_id=session_id
                                 )
+                                
+                                # Log detailed face analysis results
+                                face_count = face_analysis.get("face_count", 0)
+                                alerts = face_analysis.get("alerts", [])
+                                faces_data = face_analysis.get("faces", [])
+                                
+                                logger.info(
+                                    f"[MediaPipe] Results | session_id={session_id} "
+                                    f"face_count={face_count} alerts={alerts} "
+                                    f"time={mp_time:.3f}s"
+                                )
+                                
+                                if faces_data:
+                                    for idx, face in enumerate(faces_data):
+                                        looking_away = face.get("looking_away", False)
+                                        eye_norm = face.get("eye_norm", [0, 0])
+                                        logger.debug(
+                                            f"[MediaPipe] Face {idx} | session_id={session_id} "
+                                            f"looking_away={looking_away} eye_norm={eye_norm}"
+                                        )
+                                
+                                return face_analysis
 
                             async def detect_yolo():
                                 if not yolo_detector:
@@ -285,6 +307,47 @@ class WebRTCService:
                                     f"[YOLO] Detection complete | session_id={session_id} "
                                     f"detections={len(detections)} time={yolo_time:.3f}s"
                                 )
+                                
+                                # Log detailed YOLO detection results
+                                if detections:
+                                    logger.info(
+                                        f"[YOLO] Results | session_id={session_id} "
+                                        f"total_detections={len(detections)}"
+                                    )
+                                    
+                                    # Group by class for summary
+                                    class_summary = {}
+                                    for det in detections:
+                                        class_name = det.class_name
+                                        if class_name not in class_summary:
+                                            class_summary[class_name] = []
+                                        class_summary[class_name].append({
+                                            "confidence": det.confidence,
+                                            "box": det.xyxy
+                                        })
+                                    
+                                    # Log summary by class
+                                    for class_name, boxes in class_summary.items():
+                                        confidences = [b["confidence"] for b in boxes]
+                                        avg_conf = sum(confidences) / len(confidences) if confidences else 0
+                                        logger.info(
+                                            f"[YOLO] Class {class_name} | session_id={session_id} "
+                                            f"count={len(boxes)} avg_confidence={avg_conf:.2f}"
+                                        )
+                                    
+                                    # Log detailed box info for each detection
+                                    for idx, det in enumerate(detections):
+                                        logger.debug(
+                                            f"[YOLO] Detection {idx} | session_id={session_id} "
+                                            f"class={det.class_name} confidence={det.confidence:.3f} "
+                                            f"box={det.xyxy}"
+                                        )
+                                else:
+                                    logger.info(
+                                        f"[YOLO] Results | session_id={session_id} "
+                                        f"total_detections=0"
+                                    )
+                                
                                 return detections
 
                             # Run detections in parallel
@@ -309,6 +372,14 @@ class WebRTCService:
                             face_analysis["alerts"] = list(set(alerts))
                             
                             inference_time = time.monotonic() - inference_start
+                            
+                            # Log combined analysis results
+                            logger.info(
+                                f"[Analytics] Combined results | session_id={session_id} "
+                                f"frame_id={frame_id} inference_time={inference_time:.3f}s | "
+                                f"face_count={face_count} yolo_count={person_count} "
+                                f"alerts={face_analysis['alerts']}"
+                            )
                             
                             logger.debug(
                                 f"[Processor] Detection pipeline complete | session_id={session_id} "
@@ -415,6 +486,9 @@ class WebRTCService:
         """Send detection results (MediaPipe + YOLO) to frontend via WebRTC data channel."""
         raw_channel = self.data_channels.get(session_id)
         if not raw_channel:
+            logger.debug(
+                f"[Send] No channel available | session_id={session_id} frame_id={frame_id}"
+            )
             return
 
         try:
@@ -440,10 +514,27 @@ class WebRTCService:
                 "crop_offset": frame_dict.get("crop_offset", {}),
             }
 
+            # Log payload structure before sending
+            payload_size = len(json.dumps(payload))
+            logger.debug(
+                f"[Send] Payload | session_id={session_id} frame_id={frame_id} "
+                f"payload_size={payload_size}bytes "
+                f"face_count={payload['face'].get('face_count', 0)} "
+                f"yolo_count={payload['yolo']['detection_count']}"
+            )
+
             raw_channel.send(json.dumps(payload))
+            
+            logger.debug(
+                f"[Send] Sent successfully | session_id={session_id} frame_id={frame_id}"
+            )
 
         except Exception as e:
-            logger.error(f"[Detection] Failed to send results | session_id={session_id} error={e}")
+            logger.error(
+                f"[Send] Failed to send results | session_id={session_id} frame_id={frame_id} "
+                f"error={type(e).__name__}:{e}"
+            )
+
 
     def _setup_track_handlers(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("track")
