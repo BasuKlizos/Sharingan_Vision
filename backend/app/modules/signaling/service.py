@@ -293,11 +293,26 @@ class WebRTCService:
                                 detect_face(),
                                 detect_yolo()
                             )
+                            person_count = len(yolo_detections)
+                            face_count = face_analysis.get("face_count", 0)
+
+                            alerts = list(face_analysis.get("alerts") or [])
+
+                            if person_count > 1:
+                                alerts.append("MULTIPLE_PERSONS")
+                            elif person_count > face_count:
+                                alerts.append("EXTRA_PERSON_DETECTED")
+
+                            if person_count >= 1 and face_count == 0:
+                                alerts.append("PERSON_PRESENT_NO_FACE")
+
+                            face_analysis["alerts"] = list(set(alerts))
+                            
                             inference_time = time.monotonic() - inference_start
                             
                             logger.debug(
                                 f"[Processor] Detection pipeline complete | session_id={session_id} "
-                                f"face_alerts={len(face_analysis.get('alerts', []) if face_analysis else [])} "
+                                f"face_alerts={len(face_analysis.get('alerts', []))} "
                                 f"yolo_detections={len(yolo_detections)} time={inference_time:.3f}s"
                             )
 
