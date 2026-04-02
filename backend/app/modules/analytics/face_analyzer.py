@@ -43,7 +43,7 @@ class FaceAnalyzer:
         )
 
         # 2. MULTIPLE FACES CHECK
-        if 1 < face_count <= 3:
+        if 1 < face_count <= 2:
             alerts.append("MULTIPLE_FACES")
 
         h, w, _ = img_shape

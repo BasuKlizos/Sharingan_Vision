@@ -9,14 +9,14 @@ class MediaPipeFaceDetector:
     """
 
 
-    def __init__(self, max_faces: int = 5):
+    def __init__(self, max_faces: int = 2):
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=max_faces,
             refine_landmarks=True
         )
 
-    def detect(self, img: bytes) -> Any:
+    def detect(self, img: Any) -> Any:
         results = self.face_mesh.process(img)
         return results
 
