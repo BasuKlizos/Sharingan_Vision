@@ -103,9 +103,18 @@ class WebRTCService:
 
         if person_count > 1:
             alerts.append("MULTIPLE_PERSONS")
+            logger.warning(
+                f"[Detection] MULTIPLE_PERSONS triggered | person_count={person_count} "
+                f"face_count={face_count}"
+            )
         if person_count >= 1 and face_count == 0:
             alerts.append("PERSON_PRESENT_NO_FACE")
+            logger.warning(
+                f"[Detection] PERSON_PRESENT_NO_FACE triggered | person_count={person_count} "
+                f"face_count={face_count}"
+            )
 
+        face_analysis["person_count"] = person_count
         face_analysis["alerts"] = list(set(alerts))
         return face_analysis
 

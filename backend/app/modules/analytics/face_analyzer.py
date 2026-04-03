@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.analytics.head_movement import HeadMovementAnalyzer
 from app.logger import logger
 
 
@@ -13,6 +14,9 @@ class FaceAnalyzer:
 
     LEFT_EYE_IDX = 33
     RIGHT_EYE_IDX = 263
+    NOSE_TIP_IDX = 1
+    LEFT_IRIS_CENTER_IDX = 468
+    RIGHT_IRIS_CENTER_IDX = 473
 
     def __init__(
         self,
@@ -37,6 +41,7 @@ class FaceAnalyzer:
         self.off_center_counter = 0
         self.center_counter = 0
         self.off_center_active = False
+        self.head_movement_analyzer = HeadMovementAnalyzer()
 
     def analyze(self, results: Any, img_shape: Any, session_id: str | None = None) -> dict:
         """
@@ -68,11 +73,15 @@ class FaceAnalyzer:
 
         left_eye = self._safe_landmark(face_landmarks, self.LEFT_EYE_IDX)
         right_eye = self._safe_landmark(face_landmarks, self.RIGHT_EYE_IDX)
+        nose_tip = self._safe_landmark(face_landmarks, self.NOSE_TIP_IDX)
+        left_iris = self._safe_landmark(face_landmarks, self.LEFT_IRIS_CENTER_IDX)
+        right_iris = self._safe_landmark(face_landmarks, self.RIGHT_IRIS_CENTER_IDX)
 
-        if left_eye is None or right_eye is None:
+        if left_eye is None or right_eye is None or nose_tip is None:
             logger.warning(
-                f"[Analyzer] Required eye landmarks missing | session_id={session_id} "
-                f"left_eye_missing={left_eye is None} right_eye_missing={right_eye is None}"
+                f"[Analyzer] Required landmarks missing | session_id={session_id} "
+                f"left_eye_missing={left_eye is None} right_eye_missing={right_eye is None} "
+                f"nose_tip_missing={nose_tip is None}"
             )
             return {
                 "alerts": ["LANDMARKS_INCOMPLETE"],
@@ -89,16 +98,30 @@ class FaceAnalyzer:
         center_offset = abs(eye_center_x - 0.5)
         off_center_raw = center_offset > self.off_center_threshold
         off_center = self._smooth_off_center(off_center_raw)
+        head_movement = self.head_movement_analyzer.analyze(
+            left_eye=left_eye,
+            right_eye=right_eye,
+            nose_tip=nose_tip,
+            left_iris=left_iris,
+            right_iris=right_iris,
+        )
 
         alerts: list[str] = []
         if off_center:
             alerts.append("HEAD_OFF_CENTER")
+        alerts.extend(head_movement.alerts)
+        alerts = list(set(alerts))
 
         logger.debug(
             f"[Analyzer] Face analyzed | session_id={session_id} "
             f"off_center={off_center} raw={off_center_raw} offset={center_offset:.4f} "
             f"eye_norm=({eye_center_x:.4f},{eye_center_y:.4f}) "
             f"eye_px=({eye_x_px},{eye_y_px}) "
+            f"head_yaw={head_movement.head_yaw:.4f} "
+            f"head_velocity={head_movement.head_velocity:.4f} "
+            f"head_turning={head_movement.head_turning} "
+            f"eye_direction={head_movement.eye_direction} "
+            f"eye_head_mismatch={head_movement.eye_head_mismatch} "
             f"no_face_counter={self.no_face_counter} "
             f"off_center_counter={self.off_center_counter} "
             f"center_counter={self.center_counter}"
@@ -113,6 +136,11 @@ class FaceAnalyzer:
                     "center_offset": round(float(center_offset), 4),
                     "eye_norm": (float(eye_center_x), float(eye_center_y)),
                     "eye_px": (eye_x_px, eye_y_px),
+                    "head_yaw": head_movement.head_yaw,
+                    "head_velocity": head_movement.head_velocity,
+                    "head_turning": head_movement.head_turning,
+                    "eye_direction": head_movement.eye_direction,
+                    "eye_head_mismatch": head_movement.eye_head_mismatch,
                 }
             ],
             "face_count": 1,
@@ -126,6 +154,7 @@ class FaceAnalyzer:
         self.off_center_counter = 0
         self.center_counter = 0
         self.off_center_active = False
+        self.head_movement_analyzer.reset()
 
     def _handle_no_face(self, session_id: str | None = None) -> dict:
         self.no_face_counter += 1
@@ -140,6 +169,7 @@ class FaceAnalyzer:
         self.off_center_counter = 0
         self.center_counter = 0
         self.off_center_active = False
+        self.head_movement_analyzer.reset()
 
         logger.debug(
             f"[Analyzer] No face detected | session_id={session_id} "
