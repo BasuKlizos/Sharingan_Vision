@@ -97,18 +97,22 @@ class WebRTCService:
         return await asyncio.to_thread(yolo_detector.detect, img_to_process)
 
     def _merge_detection_alerts(self, face_analysis: dict, yolo_detections: list) -> dict:
-        person_count = len(yolo_detections)
+        # Filter the list to only count actual people
+        actual_people = [d for d in yolo_detections if d.class_name == "person"]
+        person_count = len(actual_people)
+        
+        # You can also count the devices separately if you need them!
+        device_count = len(yolo_detections) - person_count
+        
         face_count = face_analysis.get("face_count", 0)
         alerts = list(face_analysis.get("alerts") or [])
 
+        # Logic: If YOLO sees a body (back turned, side view) but MediaPipe Mesh fails to find a face
         if person_count >= 1 and face_count == 0:
             alerts.append("PERSON_PRESENT_NO_FACE")
-            logger.warning(
-                f"[Detection] PERSON_PRESENT_NO_FACE triggered | person_count={person_count} "
-                f"face_count={face_count}"
-            )
-
+            
         face_analysis["person_count"] = person_count
+        face_analysis["device_count"] = device_count # Helpful for your electronics focus!
         face_analysis["alerts"] = list(set(alerts))
         return face_analysis
 
