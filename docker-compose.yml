@@ -2,6 +2,7 @@ services:
   backend:
     build: .
     container_name: fastapi_app
+    # network_mode: "host"
     ports:
       - "8000:8000"
     depends_on:
