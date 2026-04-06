@@ -8,6 +8,8 @@ WORKDIR /app
 # Install build deps (only needed here)
 RUN apt-get update && apt-get install -y \
     build-essential \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (better caching)
@@ -22,6 +24,12 @@ RUN pip install --upgrade pip && \
 FROM python:3.12-slim
 
 WORKDIR /app
+
+# Runtime libs required by OpenCV/MediaPipe
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
