@@ -2,7 +2,7 @@ import asyncio
 import time
 import json
 from typing import Dict, Tuple, Optional
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration
 
 from app.modules.signaling.detection_channel import DetectionDataChannelManager
 from app.modules.signaling.detection_schema import DetectionFrame, CropOffset
@@ -380,9 +380,24 @@ class WebRTCService:
                     asyncio.create_task(self._cleanup(session_id))
                 
     async def handle_offer(self, sdp: str, type: str):
+
+        config = RTCConfiguration(
+            iceServers=[
+                RTCIceServer(urls="stun:stun.l.google.com:19302"),
+                RTCIceServer(
+                    urls=[
+                        f"{settings.TURN_SERVER}?transport=udp",
+                        f"{settings.TURN_SERVER}?transport=tcp",
+                    ],
+                    username=settings.TURN_USERNAME,
+                    credential=settings.TURN_PASSWORD,
+                ),
+            ]
+        )
+   
         session_id = generate_session_id()
         self.face_analyzers[session_id] = FaceAnalyzer()
-        pc = RTCPeerConnection()
+        pc = RTCPeerConnection(configuration=config)
         PEER_CONNECTIONS[session_id] = pc
 
         self._setup_track_handlers(pc, session_id)
@@ -393,6 +408,11 @@ class WebRTCService:
         
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        
+        while pc.iceGatheringState != "complete":
+            await asyncio.sleep(0.1)
+
+        logger.debug(f"[WebRTC] Offer handled | session_id={session_id} connection_state={pc.connectionState} ice_gathering_state={pc.iceGatheringState}") 
 
         return {
             "sdp": pc.localDescription.sdp,

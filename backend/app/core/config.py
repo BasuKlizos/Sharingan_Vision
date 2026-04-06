@@ -39,9 +39,9 @@ class Settings(BaseSettings):
 
     # WebRTC Config
     STUN_SERVER: str = "stun:stun.l.google.com:19302"
-    TURN_SERVER: str = ""
-    TURN_USERNAME: str = ""
-    TURN_PASSWORD: str = ""
+    TURN_SERVER: str = "turn:free.expressturn.com:3478"
+    TURN_USERNAME: str = "000000002090847582"
+    TURN_PASSWORD: str = "5NTdASVWw8AreIFCZHrGBweFDTA="
 
     # AI / Camera Detection
     ENABLE_CAMERA_MONITORING: bool = True
