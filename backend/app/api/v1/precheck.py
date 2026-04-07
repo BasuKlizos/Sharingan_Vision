@@ -5,7 +5,10 @@ from fastapi.responses import JSONResponse
 
 from app.api.utils.precheck_utils import get_lighting_precheck_service
 from app.logger import logger
-from app.modules.precheck.schemas import LightingPrecheckRequest, LightingPrecheckResponse
+from app.modules.precheck.schemas import (
+    LightingPrecheckRequest,
+    LightingPrecheckResponse,
+)
 from app.modules.precheck.service import LightingPrecheckService
 
 router = APIRouter()
