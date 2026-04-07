@@ -13,6 +13,7 @@ from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
 from app.core.config import settings
 from app.logger import logger
+from app.modules.monitoring.store import session_monitoring_store
 
 # Global state trackers
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
@@ -399,6 +400,7 @@ class WebRTCService:
         self.face_analyzers[session_id] = FaceAnalyzer()
         pc = RTCPeerConnection(configuration=config)
         PEER_CONNECTIONS[session_id] = pc
+        session_monitoring_store.register_session(session_id, webrtc_status="connected")
 
         self._setup_track_handlers(pc, session_id)
         self._setup_datachannel_handler(pc, session_id)
@@ -439,3 +441,4 @@ class WebRTCService:
             await pc.close()
         if analyzer:
             analyzer.reset()
+        session_monitoring_store.mark_session_status(session_id, "closed")

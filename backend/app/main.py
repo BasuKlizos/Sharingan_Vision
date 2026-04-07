@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
 from app.core.redis import redis_manager
+from app.api.monitoring import router as monitoring_router
 from app.api.router import api_router
 from app.core.config import settings    
 
@@ -43,6 +44,7 @@ app.add_middleware(
 app.middleware("http")(log_request_middleware)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(monitoring_router, prefix="/api", tags=["Gaze Monitoring"])
 
 @app.get("/ping")
 async def ping():
@@ -63,4 +65,3 @@ async def health_check():
     Returns status 'healthy' if the API is operational
     """
     return {"status": "healthy", "version": settings.VERSION}
-
