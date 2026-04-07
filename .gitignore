@@ -53,3 +53,5 @@ backend/logs/*
 .pyc
 
 models/
+
+.codex

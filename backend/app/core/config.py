@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     YOLO_CONF_THRESHOLD: float = config("YOLO_CONF_THRESHOLD", cast=float, default=0.25)
     YOLO_MAX_WIDTH: int = config("YOLO_MAX_WIDTH", cast=int, default=640)
 
+    # Lighting Precheck
+    PRECHECK_MIN_BRIGHTNESS: float = config("PRECHECK_MIN_BRIGHTNESS", cast=float, default=70.0)
+    PRECHECK_MAX_BRIGHTNESS: float = config("PRECHECK_MAX_BRIGHTNESS", cast=float, default=190.0)
+    PRECHECK_MAX_DARK_RATIO: float = config("PRECHECK_MAX_DARK_RATIO", cast=float, default=0.35)
+    PRECHECK_MAX_BRIGHT_RATIO: float = config("PRECHECK_MAX_BRIGHT_RATIO", cast=float, default=0.25)
+    PRECHECK_DARK_PIXEL_THRESHOLD: int = config("PRECHECK_DARK_PIXEL_THRESHOLD", cast=int, default=45)
+    PRECHECK_BRIGHT_PIXEL_THRESHOLD: int = config("PRECHECK_BRIGHT_PIXEL_THRESHOLD", cast=int, default=225)
+
     # Video Recording & Storage
     ENABLE_VIDEO_RECORDING: bool = config("ENABLE_VIDEO_RECORDING", cast=bool, default=True)
     VIDEO_RECORDING_DIR: str = config("VIDEO_RECORDING_DIR", default="./recordings")
