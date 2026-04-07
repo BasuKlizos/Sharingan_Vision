@@ -105,6 +105,13 @@ class FaceAnalyzer:
             left_iris=left_iris,
             right_iris=right_iris,
         )
+        current_view = self._extract_face_bounds(face_landmarks, w, h)
+        if current_view is not None:
+            logger.debug(
+                f"[Analyzer] Current view extracted | session_id={session_id} "
+                f"min_x={current_view['minX']:.2f} max_x={current_view['maxX']:.2f} "
+                f"min_y={current_view['minY']:.2f} max_y={current_view['maxY']:.2f}"
+            )
 
         alerts: list[str] = []
         if off_center:
@@ -129,6 +136,7 @@ class FaceAnalyzer:
 
         return {
             "alerts": alerts,
+            "current_view": current_view,
             "faces": [
                 {
                     "off_center": off_center,
@@ -242,6 +250,28 @@ class FaceAnalyzer:
     def _empty_response(alerts: list[str] | None = None) -> dict:
         return {
             "alerts": alerts or [],
+            "current_view": None,
             "faces": [],
             "face_count": 0,
         }
+
+    def _extract_face_bounds(self, face_landmarks: Any, width: int, height: int) -> dict | None:
+        try:
+            landmarks = getattr(face_landmarks, "landmark", None)
+            if not landmarks:
+                return None
+
+            x_values = [self._to_pixel(self._clamp01(point.x), width) for point in landmarks]
+            y_values = [self._to_pixel(self._clamp01(point.y), height) for point in landmarks]
+
+            if not x_values or not y_values:
+                return None
+
+            return {
+                "minX": float(min(x_values)),
+                "maxX": float(max(x_values)),
+                "minY": float(min(y_values)),
+                "maxY": float(max(y_values)),
+            }
+        except Exception:
+            return None

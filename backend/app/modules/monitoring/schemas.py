@@ -117,3 +117,50 @@ class ViolationEventRequest(BaseModel):
         if not value or not value.strip():
             raise ValueError("sessionId is required")
         return value.strip()
+
+
+class CurrentViewData(BaseModel):
+    min_x: float = Field(alias="minX")
+    max_x: float = Field(alias="maxX")
+    min_y: float = Field(alias="minY")
+    max_y: float = Field(alias="maxY")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("min_x", "max_x", "min_y", "max_y", mode="before")
+    @classmethod
+    def validate_view_number(cls, value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise ValueError("Current view coordinates must be numeric")
+        return float(value)
+
+    @field_validator("max_x")
+    @classmethod
+    def validate_current_view_x_bounds(cls, value: float, info) -> float:
+        min_x = info.data.get("min_x")
+        if min_x is not None and min_x > value:
+            raise ValueError("minX must be less than or equal to maxX")
+        return value
+
+    @field_validator("max_y")
+    @classmethod
+    def validate_current_view_y_bounds(cls, value: float, info) -> float:
+        min_y = info.data.get("min_y")
+        if min_y is not None and min_y > value:
+            raise ValueError("minY must be less than or equal to maxY")
+        return value
+
+
+class CurrentViewUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="sessionId")
+    current_view: CurrentViewData = Field(alias="currentView")
+    timestamp: Optional[datetime] = None
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_current_view_session_id(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("sessionId is required")
+        return value.strip()

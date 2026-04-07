@@ -8,6 +8,7 @@ from app.logger import logger
 from app.modules.monitoring.schemas import (
     CalibrationData,
     CalibrationSaveRequest,
+    CurrentViewUpdateRequest,
     ViolationEventRequest,
 )
 from app.modules.monitoring.store import session_monitoring_store, utc_now
@@ -95,6 +96,32 @@ async def create_violation_event(payload: dict = Body(...)):
         session.violation_count,
         request.point.x,
         request.point.y,
+    )
+
+    return {"success": True}
+
+
+@router.post("/current-view")
+async def update_current_view(payload: dict = Body(...)):
+    logger.info("[CurrentView] Incoming update request")
+    try:
+        request = CurrentViewUpdateRequest.model_validate(payload)
+    except ValidationError as exc:
+        return _validation_error_response("Invalid current view payload", exc)
+
+    session = session_monitoring_store.get_session(request.session_id)
+    if session is None:
+        return _error_response(status.HTTP_404_NOT_FOUND, "Session not found")
+
+    session_monitoring_store.update_current_view(request)
+
+    logger.info(
+        "[CurrentView] Stored snapshot | session_id=%s min_x=%.2f max_x=%.2f min_y=%.2f max_y=%.2f",
+        request.session_id,
+        request.current_view.min_x,
+        request.current_view.max_x,
+        request.current_view.min_y,
+        request.current_view.max_y,
     )
 
     return {"success": True}

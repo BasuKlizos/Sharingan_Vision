@@ -6,7 +6,12 @@ from threading import RLock
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from app.modules.monitoring.schemas import CalibrationData, ViolationEventRequest
+from app.modules.monitoring.schemas import (
+    CalibrationData,
+    CurrentViewData,
+    CurrentViewUpdateRequest,
+    ViolationEventRequest,
+)
 
 
 def utc_now() -> datetime:
@@ -35,6 +40,9 @@ class SessionMonitoringRecord:
     created_at: datetime
     webrtc_status: str = "connected"
     calibration: Optional[CalibrationData] = None
+    latest_current_view: Optional[CurrentViewData] = None
+    latest_current_view_client_at: Optional[datetime] = None
+    latest_current_view_received_at: Optional[datetime] = None
     violation_count: int = 0
     last_violation_at: Optional[datetime] = None
     violation_events: List[ViolationEventRecord] = field(default_factory=list)
@@ -107,6 +115,33 @@ class SessionMonitoringStore:
             session.violation_count += 1
             session.last_violation_at = event.received_at
             return event
+
+    def update_current_view(self, payload: CurrentViewUpdateRequest) -> Optional[SessionMonitoringRecord]:
+        with self._lock:
+            session = self._sessions.get(payload.session_id)
+            if session is None:
+                return None
+
+            session.latest_current_view = payload.current_view
+            session.latest_current_view_client_at = payload.timestamp
+            session.latest_current_view_received_at = utc_now()
+            return session
+
+    def update_current_view_for_session(
+        self,
+        session_id: str,
+        current_view: CurrentViewData,
+        client_timestamp: Optional[datetime] = None,
+    ) -> Optional[SessionMonitoringRecord]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+
+            session.latest_current_view = current_view
+            session.latest_current_view_client_at = client_timestamp
+            session.latest_current_view_received_at = utc_now()
+            return session
 
 
 session_monitoring_store = SessionMonitoringStore()

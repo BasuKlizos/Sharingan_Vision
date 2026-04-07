@@ -341,6 +341,23 @@ class WebRTCService:
                 "crop_offset": frame_dict.get("crop_offset", {}),
             }
 
+            logger.debug(
+                f"[Send] Detection frame geometry | session_id={session_id} frame_id={frame_id} "
+                f"source_width={payload['crop_offset'].get('original_width', 0)} "
+                f"source_height={payload['crop_offset'].get('original_height', 0)} "
+                f"x_offset={payload['crop_offset'].get('x_offset', 0)} "
+                f"y_offset={payload['crop_offset'].get('y_offset', 0)} "
+                f"detections={payload['yolo']['detection_count']}"
+            )
+
+            current_view = (face_analysis or {}).get("current_view")
+            if current_view is not None:
+                logger.debug(
+                    f"[Send] Current view payload | session_id={session_id} frame_id={frame_id} "
+                    f"min_x={current_view['minX']:.2f} max_x={current_view['maxX']:.2f} "
+                    f"min_y={current_view['minY']:.2f} max_y={current_view['maxY']:.2f}"
+                )
+
             raw_channel.send(json.dumps(payload))
 
         except Exception as e:
