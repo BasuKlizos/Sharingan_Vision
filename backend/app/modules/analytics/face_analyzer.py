@@ -135,6 +135,7 @@ class FaceAnalyzer:
         )
 
         return {
+            "session_id": session_id,
             "alerts": alerts,
             "current_view": current_view,
             "faces": [
@@ -249,6 +250,7 @@ class FaceAnalyzer:
     @staticmethod
     def _empty_response(alerts: list[str] | None = None) -> dict:
         return {
+            "session_id": None,
             "alerts": alerts or [],
             "current_view": None,
             "faces": [],

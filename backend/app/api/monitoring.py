@@ -57,7 +57,7 @@ async def save_calibration(payload: dict = Body(...)):
         maxY=request.max_y,
         savedAt=utc_now(),
     )
-    session_monitoring_store.save_calibration(request.session_id, calibration)
+    updated_session = session_monitoring_store.save_calibration(request.session_id, calibration)
 
     logger.info(
         "[Calibration] Saved safe zone | session_id=%s min_x=%.2f max_x=%.2f min_y=%.2f max_y=%.2f",
@@ -68,9 +68,17 @@ async def save_calibration(payload: dict = Body(...)):
         request.max_y,
     )
 
+    if updated_session and updated_session.calibration_zone_definition:
+        logger.info(
+            "[Calibration] Zone thresholds created | session_id=%s good=20%% looking_away=30%% far_away=40%%",
+            request.session_id,
+        )
+
     return {
         "success": True,
         "sessionId": request.session_id,
+        "zoneDefinition": updated_session.calibration_zone_definition if updated_session else None,
+        "latestZoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
     }
 
 
@@ -113,7 +121,7 @@ async def update_current_view(payload: dict = Body(...)):
     if session is None:
         return _error_response(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    session_monitoring_store.update_current_view(request)
+    updated_session = session_monitoring_store.update_current_view(request)
 
     logger.info(
         "[CurrentView] Stored snapshot | session_id=%s min_x=%.2f max_x=%.2f min_y=%.2f max_y=%.2f",
@@ -124,4 +132,16 @@ async def update_current_view(payload: dict = Body(...)):
         request.current_view.max_y,
     )
 
-    return {"success": True}
+    if updated_session and updated_session.latest_zone_assessment:
+        zone_assessment = updated_session.latest_zone_assessment
+        logger.info(
+            "[CurrentView] Zone assessment | session_id=%s status=%s drift_percent=%.2f",
+            request.session_id,
+            zone_assessment["status"],
+            zone_assessment["driftPercent"],
+        )
+
+    return {
+        "success": True,
+        "zoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
+    }

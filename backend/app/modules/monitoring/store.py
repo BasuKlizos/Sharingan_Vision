@@ -12,6 +12,7 @@ from app.modules.monitoring.schemas import (
     CurrentViewUpdateRequest,
     ViolationEventRequest,
 )
+from app.modules.monitoring.zones import assess_current_view_against_calibration, build_zone_definition
 
 
 def utc_now() -> datetime:
@@ -40,9 +41,11 @@ class SessionMonitoringRecord:
     created_at: datetime
     webrtc_status: str = "connected"
     calibration: Optional[CalibrationData] = None
+    calibration_zone_definition: Optional[dict] = None
     latest_current_view: Optional[CurrentViewData] = None
     latest_current_view_client_at: Optional[datetime] = None
     latest_current_view_received_at: Optional[datetime] = None
+    latest_zone_assessment: Optional[dict] = None
     violation_count: int = 0
     last_violation_at: Optional[datetime] = None
     violation_events: List[ViolationEventRecord] = field(default_factory=list)
@@ -88,6 +91,14 @@ class SessionMonitoringStore:
                 return None
 
             session.calibration = calibration
+            session.calibration_zone_definition = build_zone_definition(calibration)
+            if session.latest_current_view is not None:
+                session.latest_zone_assessment = assess_current_view_against_calibration(
+                    calibration=calibration,
+                    current_view=session.latest_current_view,
+                )
+            else:
+                session.latest_zone_assessment = None
             return session
 
     def create_violation_event(self, payload: ViolationEventRequest) -> Optional[ViolationEventRecord]:
@@ -125,6 +136,13 @@ class SessionMonitoringStore:
             session.latest_current_view = payload.current_view
             session.latest_current_view_client_at = payload.timestamp
             session.latest_current_view_received_at = utc_now()
+            if session.calibration is not None:
+                session.latest_zone_assessment = assess_current_view_against_calibration(
+                    calibration=session.calibration,
+                    current_view=payload.current_view,
+                )
+            else:
+                session.latest_zone_assessment = None
             return session
 
     def update_current_view_for_session(
@@ -141,6 +159,13 @@ class SessionMonitoringStore:
             session.latest_current_view = current_view
             session.latest_current_view_client_at = client_timestamp
             session.latest_current_view_received_at = utc_now()
+            if session.calibration is not None:
+                session.latest_zone_assessment = assess_current_view_against_calibration(
+                    calibration=session.calibration,
+                    current_view=current_view,
+                )
+            else:
+                session.latest_zone_assessment = None
             return session
 
 

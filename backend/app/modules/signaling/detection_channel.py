@@ -131,7 +131,7 @@ class DetectionDataChannelManager:
             )
             return
 
-        session_monitoring_store.update_current_view_for_session(
+        updated_session = session_monitoring_store.update_current_view_for_session(
             session_id=self.session_id,
             current_view=current_view,
         )
@@ -141,6 +141,13 @@ class DetectionDataChannelManager:
             f"min_x={current_view.min_x:.2f} max_x={current_view.max_x:.2f} "
             f"min_y={current_view.min_y:.2f} max_y={current_view.max_y:.2f}"
         )
+        if updated_session and updated_session.latest_zone_assessment:
+            zone_assessment = updated_session.latest_zone_assessment
+            logger.info(
+                f"[DetectionChannel] Zone assessment | session_id={self.session_id} "
+                f"status={zone_assessment['status']} "
+                f"drift_percent={zone_assessment['driftPercent']:.2f}"
+            )
     
     async def _monitor_channel_state(self):
         """Monitor channel state for issues like stuck 'connecting' state"""

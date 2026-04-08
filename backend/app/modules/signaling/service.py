@@ -111,6 +111,27 @@ class WebRTCService:
         # Logic: If YOLO sees a body (back turned, side view) but MediaPipe Mesh fails to find a face
         if person_count >= 1 and face_count == 0:
             alerts.append("PERSON_PRESENT_NO_FACE")
+
+        session_id = face_analysis.get("session_id")
+        if session_id:
+            session = session_monitoring_store.get_session(session_id)
+            if session and session.calibration is not None and session.latest_zone_assessment is not None:
+                try:
+                    zone_assessment = session.latest_zone_assessment
+                    face_analysis["zone_assessment"] = zone_assessment
+                    if session.latest_current_view is not None:
+                        face_analysis["webrtc_current_view"] = session.latest_current_view.model_dump(
+                            by_alias=True
+                        )
+
+                    if zone_assessment["status"] == "looking_away":
+                        alerts.append("LOOKING_AWAY_FROM_SCREEN")
+                    elif zone_assessment["status"] == "far_away":
+                        alerts.append("LOOKING_FAR_AWAY_FROM_SCREEN")
+                except Exception as exc:
+                    logger.warning(
+                        f"[Send] Failed to assess zone alert | session_id={session_id} error={exc}"
+                    )
             
         face_analysis["person_count"] = person_count
         face_analysis["device_count"] = device_count # Helpful for your electronics focus!
