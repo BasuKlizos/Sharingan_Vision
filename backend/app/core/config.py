@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     REDIS_HOST: str = config("REDIS_HOST", cast=str, default="localhost")
     REDIS_DB: int = config("REDIS_DB", cast=int, default=0)
     REDIS_TIMEOUT: int = config("REDIS_TIMEOUT", cast=int, default=5)
+
+    # MongoDB (optional persistence)
+    MONGODB_URI: str = config("MONGODB_URI", cast=str, default="mongodb://localhost:27017")
+    MONGODB_DB: str = config("MONGODB_DB", cast=str, default="sharingan_vision")
+
+    # Proctoring persistence backend: redis|mongo|dual (dual saves to both Redis cache + MongoDB DB)
+    PROCTOR_STORE_BACKEND: str = config("PROCTOR_STORE_BACKEND", cast=str, default="dual")
+    
+    # Proctoring background flush interval (seconds)
+    PROCTOR_FLUSH_INTERVAL_SECONDS: int = config("PROCTOR_FLUSH_INTERVAL_SECONDS", cast=int, default=30)
     
     
     # WebSocket / Signaling

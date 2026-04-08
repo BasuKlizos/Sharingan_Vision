@@ -14,6 +14,10 @@ from app.common.exceptions import InvalidMessageError
 from app.core.config import settings
 from app.logger import logger
 from app.modules.monitoring.store import session_monitoring_store
+from app.modules.proctoring.engine import ProctoringEngine
+from app.modules.proctoring.store import get_proctoring_store
+from app.modules.proctoring.types import ProctoringInputs
+from app.modules.proctoring.flush_service import get_flush_service
 
 # Global state trackers
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
@@ -27,6 +31,10 @@ class WebRTCService:
         self.face_detector = MediaPipeFaceDetector()
         self.face_analyzers = {}
         self.data_channels = {}  # Direct references to aiortc channels
+        self.proctoring_engines: Dict[str, ProctoringEngine] = {}
+        self.proctor_store = get_proctoring_store()
+        self._unsaved_proctor_metrics: Dict[str, list[ProctoringInputs]] = {}
+        self._unsaved_proctor_alerts: Dict[str, list[dict]] = {}
 
     def _init_yolo_detector(self, session_id: str):
         """Initialize YOLO detector with settings"""
@@ -155,8 +163,222 @@ class WebRTCService:
         )
         face_analysis = self._merge_detection_alerts(face_analysis, yolo_detections)
 
+        proctor_alerts = await self._run_proctoring_and_persist(
+            session_id=session_id,
+            frame_id=frame_id,
+            timestamp=float(face_analysis.get("timestamp") or time.time()),
+            face_analysis=face_analysis,
+            yolo_detections=yolo_detections,
+        )
+
         self._send_combined_results(
-            session_id, frame_id, face_analysis, yolo_detections, crop_offset
+            session_id, frame_id, face_analysis, yolo_detections, crop_offset, proctor_alerts
+        )
+
+    def _get_or_create_proctor_engine(self, session_id: str) -> ProctoringEngine:
+        engine = self.proctoring_engines.get(session_id)
+        if engine is None:
+            engine = ProctoringEngine(session_id=session_id)
+            self.proctoring_engines[session_id] = engine
+        return engine
+
+    def _derive_yolo_flags(self, yolo_detections: list) -> dict:
+        phone_conf = 0.0
+        device_conf = 0.0
+        materials_conf = 0.0
+        persons_conf = 0.0
+        person_count = 0
+
+        for det in yolo_detections or []:
+            class_name = getattr(det, "class_name", "") or ""
+            conf = float(getattr(det, "confidence", 0.0) or 0.0)
+            name = class_name.lower()
+            if name == "person":
+                person_count += 1
+                persons_conf = max(persons_conf, conf)
+                continue
+
+            if name in {"cell phone", "phone", "mobile phone"}:
+                phone_conf = max(phone_conf, conf)
+                continue
+
+            if name in {"laptop", "tablet", "keyboard", "remote", "tv", "tvmonitor"}:
+                device_conf = max(device_conf, conf)
+                continue
+
+            if name in {"book", "notebook", "paper", "scissors"}:
+                materials_conf = max(materials_conf, conf)
+
+        return {
+            "phone_detected": phone_conf > 0.0,
+            "phone_confidence": phone_conf or None,
+            "other_device_confidence": device_conf or None,
+            "unauthorized_materials_detected": materials_conf > 0.0,
+            "unauthorized_materials_confidence": materials_conf or None,
+            "multiple_persons_detected": person_count > 1,
+            "multiple_persons_confidence": persons_conf or None,
+            "person_count": person_count,
+        }
+
+    def _derive_head_and_gaze(self, face_analysis: dict) -> tuple[float | None, str | None]:
+        faces = face_analysis.get("faces") or []
+        if not faces:
+            return None, None
+        face = faces[0] or {}
+
+        # FaceAnalyzer produces a normalized yaw (roughly nose offset / eye distance).
+        # Convert to a degrees-like scale so rule thresholds can be expressed in degrees.
+        raw_yaw = face.get("head_yaw")
+        head_yaw = None
+        try:
+            if raw_yaw is not None:
+                head_yaw = float(raw_yaw) * 90.0
+        except Exception:
+            head_yaw = None
+
+        eye_dir = face.get("eye_direction")
+        gaze_direction = None
+        try:
+            if eye_dir is not None:
+                eye_dir = float(eye_dir)
+                if abs(eye_dir) < 0.12:
+                    gaze_direction = "center"
+                else:
+                    gaze_direction = "right" if eye_dir > 0 else "left"
+        except Exception:
+            gaze_direction = None
+
+        return head_yaw, gaze_direction
+
+    async def _run_proctoring_and_persist(
+        self,
+        *,
+        session_id: str,
+        frame_id: int,
+        timestamp: float,
+        face_analysis: dict,
+        yolo_detections: list,
+    ) -> list[dict]:
+        engine = self._get_or_create_proctor_engine(session_id)
+
+        face_count = int(face_analysis.get("face_count") or 0)
+        face_detected = face_count > 0 and "NO_FACE" not in (face_analysis.get("alerts") or [])
+        head_yaw, gaze_direction = self._derive_head_and_gaze(face_analysis)
+        yolo_flags = self._derive_yolo_flags(yolo_detections)
+
+        inputs = ProctoringInputs(
+            session_id=session_id,
+            frame_id=frame_id,
+            timestamp=timestamp,
+            face_count=face_count,
+            face_detected=face_detected,
+            head_yaw=head_yaw,
+            gaze_direction=gaze_direction,
+            phone_detected=bool(yolo_flags["phone_detected"]),
+            phone_confidence=yolo_flags.get("phone_confidence"),
+            other_device_confidence=yolo_flags.get("other_device_confidence"),
+            unauthorized_materials_detected=bool(yolo_flags["unauthorized_materials_detected"]),
+            unauthorized_materials_confidence=yolo_flags.get("unauthorized_materials_confidence"),
+            multiple_persons_detected=bool(yolo_flags["multiple_persons_detected"]),
+            multiple_persons_confidence=yolo_flags.get("multiple_persons_confidence"),
+        )
+
+        # Persist minimal metrics snapshot (not full detections/landmarks).
+        ok = await self.proctor_store.append_metrics(inputs)
+        if not ok:
+            buf = self._unsaved_proctor_metrics.setdefault(session_id, [])
+            if len(buf) < 2000:
+                buf.append(inputs)
+
+        emitted_alerts = engine.update(inputs)
+        for alert in emitted_alerts:
+            ok_alert = await self.proctor_store.append_alert(alert)
+            if not ok_alert:
+                buf_alerts = self._unsaved_proctor_alerts.setdefault(session_id, [])
+                if len(buf_alerts) < 1000:
+                    buf_alerts.append(
+                        {
+                            "session_id": alert.session_id,
+                            "rule_id": alert.rule_id,
+                            "label": alert.label,
+                            "severity": alert.severity,
+                            "risk_score": alert.risk_score,
+                            "started_at": alert.started_at,
+                            "last_seen_at": alert.last_seen_at,
+                            "frame_id": alert.frame_id,
+                            "evidence": alert.evidence,
+                        }
+                    )
+
+        # Return JSON-safe dicts for frontend payload
+        return [
+            {
+                "rule_id": a.rule_id,
+                "label": a.label,
+                "severity": a.severity,
+                "risk_score": a.risk_score,
+                "started_at": a.started_at,
+                "last_seen_at": a.last_seen_at,
+                "frame_id": a.frame_id,
+                "evidence": a.evidence,
+            }
+            for a in emitted_alerts
+        ]
+
+    async def _flush_proctoring_buffers(self, session_id: str) -> None:
+        metrics_buffer = self._unsaved_proctor_metrics.get(session_id) or []
+        alerts_buffer = self._unsaved_proctor_alerts.get(session_id) or []
+        logger.info(
+            "[Proctoring] Flush start | session_id=%s buffered_metrics=%s buffered_alerts=%s",
+            session_id,
+            len(metrics_buffer),
+            len(alerts_buffer),
+        )
+        if not metrics_buffer and not alerts_buffer:
+            return
+
+        flushed_metrics = 0
+        remaining_metrics: list[ProctoringInputs] = []
+        for item in metrics_buffer:
+            ok = await self.proctor_store.append_metrics(item)
+            if ok:
+                flushed_metrics += 1
+            else:
+                remaining_metrics.append(item)
+
+        flushed_alerts = 0
+        remaining_alerts: list[dict] = []
+        if alerts_buffer:
+            from app.modules.proctoring.types import ProctoringAlert
+
+            for alert_dict in alerts_buffer:
+                ok = False
+                try:
+                    ok = await self.proctor_store.append_alert(ProctoringAlert(**alert_dict))
+                except Exception:
+                    ok = False
+                if ok:
+                    flushed_alerts += 1
+                else:
+                    remaining_alerts.append(alert_dict)
+
+        if remaining_metrics:
+            self._unsaved_proctor_metrics[session_id] = remaining_metrics
+        else:
+            self._unsaved_proctor_metrics.pop(session_id, None)
+
+        if remaining_alerts:
+            self._unsaved_proctor_alerts[session_id] = remaining_alerts
+        else:
+            self._unsaved_proctor_alerts.pop(session_id, None)
+
+        logger.info(
+            "[Proctoring] Flush attempt | session_id=%s flushed_metrics=%s flushed_alerts=%s remaining_metrics=%s remaining_alerts=%s",
+            session_id,
+            flushed_metrics,
+            flushed_alerts,
+            len(remaining_metrics),
+            len(remaining_alerts),
         )
 
     async def _receiver_task_loop(
@@ -324,7 +546,7 @@ class WebRTCService:
             stop_processing.set()
             await self._cancel_detection_tasks(receiver, processor)
         finally:
-            pass
+            await self._flush_proctoring_buffers(session_id)
 
     def _send_combined_results(
         self,
@@ -333,6 +555,7 @@ class WebRTCService:
         face_analysis: dict,
         yolo_detections: list,
         crop_offset: CropOffset = None,
+        proctor_alerts: Optional[list] = None,
     ):
         """Send detection results (MediaPipe + YOLO) to frontend via WebRTC data channel."""
         raw_channel = self.data_channels.get(session_id)
@@ -360,6 +583,9 @@ class WebRTCService:
                     "detections": frame_dict["detections"],
                 },
                 "crop_offset": frame_dict.get("crop_offset", {}),
+                "proctoring": {
+                    "alerts": proctor_alerts or [],
+                },
             }
 
             logger.debug(
@@ -461,12 +687,13 @@ class WebRTCService:
         }
 
     async def _cleanup(self, session_id: str):
-        """Clean up session resources."""
+        """Clean up session resources and flush proctoring data."""
         pc = PEER_CONNECTIONS.pop(session_id, None)
         # FIX #5/#6: Properly cleanup the manager and call its cleanup method
         manager = DETECTION_CHANNELS.pop(session_id, None)
         self.data_channels.pop(session_id, None)
         analyzer = self.face_analyzers.pop(session_id, None)
+        self.proctoring_engines.pop(session_id, None)
 
         # Call manager.cleanup() before discarding
         if manager:
@@ -480,3 +707,13 @@ class WebRTCService:
         if analyzer:
             analyzer.reset()
         session_monitoring_store.mark_session_status(session_id, "closed")
+
+        # Final flush for any buffered proctoring writes.
+        await self._flush_proctoring_buffers(session_id)
+
+        # Flush remaining Redis data to MongoDB via background service
+        try:
+            flush_service = get_flush_service()
+            await flush_service.flush_session_on_demand(session_id)
+        except Exception as e:
+            logger.error(f"[Cleanup] Failed to flush session data | session_id={session_id} | error={e}")

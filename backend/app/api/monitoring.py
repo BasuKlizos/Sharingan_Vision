@@ -12,8 +12,10 @@ from app.modules.monitoring.schemas import (
     ViolationEventRequest,
 )
 from app.modules.monitoring.store import session_monitoring_store, utc_now
+from app.modules.proctoring.store import get_proctoring_store
 
 router = APIRouter()
+_proctor_store = get_proctoring_store()
 
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
@@ -145,3 +147,29 @@ async def update_current_view(payload: dict = Body(...)):
         "success": True,
         "zoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
     }
+
+
+@router.get("/proctoring/{session_id}/alerts")
+async def get_proctoring_alerts(session_id: str, limit: int = 50):
+    """
+    Returns latest proctoring alerts persisted in Redis for the session.
+    """
+    try:
+        alerts = await _proctor_store.get_latest_alerts(session_id=session_id, limit=limit)
+    except Exception as exc:
+        logger.warning("[Proctoring] Failed to load alerts | session_id=%s error=%s", session_id, exc)
+        return _error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to load proctoring alerts")
+    return {"success": True, "sessionId": session_id, "alerts": alerts}
+
+
+@router.get("/proctoring/{session_id}/metrics")
+async def get_proctoring_metrics(session_id: str, limit: int = 200):
+    """
+    Returns latest minimal per-frame metrics persisted in Redis for the session.
+    """
+    try:
+        metrics = await _proctor_store.get_latest_metrics(session_id=session_id, limit=limit)
+    except Exception as exc:
+        logger.warning("[Proctoring] Failed to load metrics | session_id=%s error=%s", session_id, exc)
+        return _error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to load proctoring metrics")
+    return {"success": True, "sessionId": session_id, "metrics": metrics}

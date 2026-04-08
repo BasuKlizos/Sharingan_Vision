@@ -69,7 +69,9 @@ class FaceAnalyzer:
 
         self.no_face_counter = 0
 
-        face_landmarks = results.multi_face_landmarks[0]
+        face_landmarks_all = getattr(results, "multi_face_landmarks", None) or []
+        face_count = len(face_landmarks_all)
+        face_landmarks = face_landmarks_all[0]
 
         left_eye = self._safe_landmark(face_landmarks, self.LEFT_EYE_IDX)
         right_eye = self._safe_landmark(face_landmarks, self.RIGHT_EYE_IDX)
@@ -152,7 +154,7 @@ class FaceAnalyzer:
                     "eye_head_mismatch": head_movement.eye_head_mismatch,
                 }
             ],
-            "face_count": 1,
+            "face_count": face_count,
         }
 
     def reset(self) -> None:

@@ -294,6 +294,7 @@ class DetectionDataChannelManager:
                 pass
         
         if self.channel:
-            await self.channel.close()
+            # aiortc RTCDataChannel.close() is synchronous
+            self.channel.close()
         
         logger.info(f"[DetectionChannel] Cleaned up | session_id={self.session_id}")
