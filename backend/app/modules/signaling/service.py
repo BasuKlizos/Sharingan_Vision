@@ -87,6 +87,30 @@ class WebRTCService:
         self.face_analyzers[session_id] = analyzer
         return analyzer
 
+    @staticmethod
+    def _translate_face_current_view_to_original_frame(
+        face_analysis: dict | None,
+        crop_offset: CropOffset,
+    ) -> dict | None:
+        if not face_analysis:
+            return face_analysis
+
+        current_view = face_analysis.get("current_view")
+        if not isinstance(current_view, dict):
+            return face_analysis
+
+        if crop_offset.x_offset == 0 and crop_offset.y_offset == 0:
+            return face_analysis
+
+        translated_view = {
+            "minX": float(current_view["minX"]) + float(crop_offset.x_offset),
+            "maxX": float(current_view["maxX"]) + float(crop_offset.x_offset),
+            "minY": float(current_view["minY"]) + float(crop_offset.y_offset),
+            "maxY": float(current_view["maxY"]) + float(crop_offset.y_offset),
+        }
+        face_analysis["current_view"] = translated_view
+        return face_analysis
+
     async def _detect_face_analysis(self, img_to_process, session_id: str) -> dict:
         face_results = await asyncio.to_thread(self.face_detector.detect, img_to_process)
         analyzer = self._get_or_create_face_analyzer(session_id)
@@ -152,6 +176,10 @@ class WebRTCService:
         face_analysis, yolo_detections = await asyncio.gather(
             self._detect_face_analysis(img_to_process, session_id),
             self._detect_yolo_detections(yolo_detector, img_to_process),
+        )
+        face_analysis = self._translate_face_current_view_to_original_frame(
+            face_analysis,
+            crop_offset,
         )
         face_analysis = self._merge_detection_alerts(face_analysis, yolo_detections)
 

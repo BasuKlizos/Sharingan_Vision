@@ -92,13 +92,9 @@ class SessionMonitoringStore:
 
             session.calibration = calibration
             session.calibration_zone_definition = build_zone_definition(calibration)
-            if session.latest_current_view is not None:
-                session.latest_zone_assessment = assess_current_view_against_calibration(
-                    calibration=calibration,
-                    current_view=session.latest_current_view,
-                )
-            else:
-                session.latest_zone_assessment = None
+            # Save frontend calibration exactly as received. Zone assessment is
+            # computed only when a later current-view update arrives.
+            session.latest_zone_assessment = None
             return session
 
     def create_violation_event(self, payload: ViolationEventRequest) -> Optional[ViolationEventRecord]:
