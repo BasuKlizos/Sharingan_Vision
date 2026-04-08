@@ -9,6 +9,7 @@ from app.modules.signaling.detection_schema import DetectionFrame, CropOffset
 from app.modules.detection.yolo_detector import YoloDetector
 from app.modules.detection.mediapipe_face import MediaPipeFaceDetector
 from app.modules.analytics.face_analyzer import FaceAnalyzer
+from app.modules.monitoring.schemas import CurrentViewData
 from app.api.utils.utils import generate_session_id
 from app.common.exceptions import InvalidMessageError
 from app.core.config import settings
@@ -124,10 +125,6 @@ class WebRTCService:
                             by_alias=True
                         )
 
-                    if zone_assessment["status"] == "looking_away":
-                        alerts.append("LOOKING_AWAY_FROM_SCREEN")
-                    elif zone_assessment["status"] == "far_away":
-                        alerts.append("LOOKING_FAR_AWAY_FROM_SCREEN")
                 except Exception as exc:
                     logger.warning(
                         f"[Send] Failed to assess zone alert | session_id={session_id} error={exc}"
@@ -153,6 +150,18 @@ class WebRTCService:
             self._detect_face_analysis(img_to_process, session_id),
             self._detect_yolo_detections(yolo_detector, img_to_process),
         )
+        current_view = (face_analysis or {}).get("current_view")
+        if current_view is not None:
+            try:
+                session_monitoring_store.update_current_view_for_session(
+                    session_id=session_id,
+                    current_view=CurrentViewData.model_validate(current_view),
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"[Process] Failed to update current view from face analysis | "
+                    f"session_id={session_id} frame_id={frame_id} error={exc}"
+                )
         face_analysis = self._merge_detection_alerts(face_analysis, yolo_detections)
 
         self._send_combined_results(

@@ -5,9 +5,9 @@ from typing import Any
 from app.modules.monitoring.schemas import CalibrationData, CurrentViewData
 
 
-GOOD_ZONE_THRESHOLD = 0.20
-LOOKING_AWAY_THRESHOLD = 0.30
-FAR_AWAY_THRESHOLD = 0.40
+GOOD_ZONE_THRESHOLD = 0.30
+LOOKING_AWAY_THRESHOLD = 0.55
+FAR_AWAY_THRESHOLD = 0.80
 
 
 def _build_square(min_x: float, max_x: float, min_y: float, max_y: float) -> dict[str, float]:
@@ -52,15 +52,15 @@ def build_zone_definition(calibration: CalibrationData) -> dict[str, Any]:
         "baseSquare": base_square,
         "zones": {
             "good": {
-                "thresholdPercent": 20,
+                "thresholdPercent": 30,
                 "bounds": _expand_square(base_square, GOOD_ZONE_THRESHOLD),
             },
             "lookingAway": {
-                "thresholdPercent": 30,
+                "thresholdPercent": 55,
                 "bounds": _expand_square(base_square, LOOKING_AWAY_THRESHOLD),
             },
             "farAway": {
-                "thresholdPercent": 40,
+                "thresholdPercent": 80,
                 "bounds": _expand_square(base_square, FAR_AWAY_THRESHOLD),
             },
         },
@@ -88,7 +88,7 @@ def assess_current_view_against_calibration(
     if drift_ratio <= GOOD_ZONE_THRESHOLD:
         status = "good"
         message = "User is not looking away from the screen"
-    elif drift_ratio < FAR_AWAY_THRESHOLD:
+    elif drift_ratio <= LOOKING_AWAY_THRESHOLD:
         status = "looking_away"
         message = "User is looking away from the screen"
     else:
@@ -104,9 +104,9 @@ def assess_current_view_against_calibration(
             "y": round(drift_y, 2),
         },
         "thresholds": {
-            "good": 20,
-            "lookingAway": 30,
-            "farAway": 40,
+            "good": 30,
+            "lookingAway": 55,
+            "farAway": 80,
         },
         "calibrationSquare": base_square,
         "currentViewSquare": current_square,

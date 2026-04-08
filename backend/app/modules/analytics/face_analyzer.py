@@ -17,6 +17,12 @@ class FaceAnalyzer:
     NOSE_TIP_IDX = 1
     LEFT_IRIS_CENTER_IDX = 468
     RIGHT_IRIS_CENTER_IDX = 473
+    MODERATE_CENTER_OFFSET_THRESHOLD = 0.16
+    STRONG_CENTER_OFFSET_THRESHOLD = 0.22
+    MODERATE_HEAD_YAW_THRESHOLD = 0.18
+    STRONG_HEAD_YAW_THRESHOLD = 0.32
+    MODERATE_EYE_DIRECTION_THRESHOLD = 0.08
+    STRONG_EYE_DIRECTION_THRESHOLD = 0.16
 
     def __init__(
         self,
@@ -118,6 +124,14 @@ class FaceAnalyzer:
             alerts.append("HEAD_OFF_CENTER")
         alerts.extend(head_movement.alerts)
         alerts = list(set(alerts))
+        attention_signal = self._build_attention_signal(
+            alerts=alerts,
+            center_offset=float(center_offset),
+            head_yaw=float(head_movement.head_yaw),
+            eye_direction=head_movement.eye_direction,
+            eye_head_mismatch=bool(head_movement.eye_head_mismatch),
+            head_turning=bool(head_movement.head_turning),
+        )
 
         logger.debug(
             f"[Analyzer] Face analyzed | session_id={session_id} "
@@ -150,6 +164,9 @@ class FaceAnalyzer:
                     "head_turning": head_movement.head_turning,
                     "eye_direction": head_movement.eye_direction,
                     "eye_head_mismatch": head_movement.eye_head_mismatch,
+                    "attention_state": attention_signal["state"],
+                    "attention_score": attention_signal["score"],
+                    "attention_reasons": attention_signal["reasons"],
                 }
             ],
             "face_count": 1,
@@ -277,3 +294,76 @@ class FaceAnalyzer:
             }
         except Exception:
             return None
+
+    def _build_attention_signal(
+        self,
+        *,
+        alerts: list[str],
+        center_offset: float,
+        head_yaw: float,
+        eye_direction: float | None,
+        eye_head_mismatch: bool,
+        head_turning: bool,
+    ) -> dict[str, Any]:
+        score = 0
+        reasons: list[str] = []
+        categories: set[str] = set()
+
+        abs_head_yaw = abs(float(head_yaw))
+        abs_eye_direction = abs(float(eye_direction or 0.0))
+
+        if center_offset >= self.STRONG_CENTER_OFFSET_THRESHOLD:
+            score += 2
+            categories.add("position")
+            reasons.append("strong_off_center")
+        elif center_offset >= self.MODERATE_CENTER_OFFSET_THRESHOLD:
+            score += 1
+            categories.add("position")
+            reasons.append("moderate_off_center")
+
+        if abs_head_yaw >= self.STRONG_HEAD_YAW_THRESHOLD:
+            score += 2
+            categories.add("head")
+            reasons.append("strong_head_turn")
+        elif abs_head_yaw >= self.MODERATE_HEAD_YAW_THRESHOLD:
+            score += 1
+            categories.add("head")
+            reasons.append("moderate_head_turn")
+
+        if abs_eye_direction >= self.STRONG_EYE_DIRECTION_THRESHOLD:
+            score += 2
+            categories.add("eyes")
+            reasons.append("strong_eye_shift")
+        elif abs_eye_direction >= self.MODERATE_EYE_DIRECTION_THRESHOLD:
+            score += 1
+            categories.add("eyes")
+            reasons.append("moderate_eye_shift")
+
+        if eye_head_mismatch:
+            score += 1
+            categories.add("coordination")
+            reasons.append("eye_head_mismatch")
+
+        if head_turning or "HEAD_TURNING_PERSISTENT" in alerts:
+            score += 1
+            categories.add("motion")
+            reasons.append("persistent_turn")
+
+        if "HEAD_SUDDEN_JERK" in alerts:
+            score += 1
+            categories.add("motion")
+            reasons.append("sudden_jerk")
+
+        category_count = len(categories)
+        if score >= 5 and category_count >= 2:
+            state = "far_away"
+        elif score >= 3 and category_count >= 2:
+            state = "looking_away"
+        else:
+            state = "good"
+
+        return {
+            "state": state,
+            "score": score,
+            "reasons": reasons,
+        }
