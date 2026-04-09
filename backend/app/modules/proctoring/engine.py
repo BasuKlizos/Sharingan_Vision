@@ -37,7 +37,9 @@ class ProctoringEngine:
 
         alerts.extend(self._rule_multiple_faces(inputs, now))
         alerts.extend(self._rule_face_missing(inputs, now))
-        alerts.extend(self._rule_device_detected(inputs, now))
+        alerts.extend(self._rule_person_present_no_face(inputs, now))
+        alerts.extend(self._rule_phone_detected(inputs, now))
+        alerts.extend(self._rule_external_device_detected(inputs, now))
         alerts.extend(self._rule_unauthorized_materials(inputs, now))
         alerts.extend(self._rule_excessive_head_movement(inputs, now))
         alerts.extend(self._rule_gaze_away(inputs, now))
@@ -45,6 +47,12 @@ class ProctoringEngine:
         alerts.extend(self._rule_abnormal_blink(inputs, now))
         alerts.extend(self._rule_repeated_eye_closure(inputs, now))
         return alerts
+
+    @staticmethod
+    def _extra_list(inputs: ProctoringInputs, key: str) -> list[str]:
+        extra = inputs.extra or {}
+        values = extra.get(key) or []
+        return [str(value) for value in values]
 
     def _activate_if_true(self, rule_id: str, condition: bool, now: float) -> Optional[_ActiveRuleState]:
         if condition:
@@ -126,17 +134,15 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_device_detected(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_person_present_no_face(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+        raw_alerts = {value.upper() for value in self._extra_list(inputs, "raw_alerts")}
         state = self._activate_if_true(
-            "DEVICE_DETECTED",
-            inputs.phone_detected or inputs.other_device_detected,
+            "PERSON_PRESENT_NO_FACE",
+            "PERSON_PRESENT_NO_FACE" in raw_alerts,
             now,
         )
         if state is None:
             return []
-        if (now - state.started_at) < float(settings.PROCTOR_DEVICE_HOLD_SECONDS):
-            return []
-        risk = 0.92 if inputs.phone_detected else 0.72
         return self._emit_once_with_cooldown(
             state,
             now,
@@ -144,16 +150,76 @@ class ProctoringEngine:
             lambda: ProctoringAlert(
                 session_id=inputs.session_id,
                 frame_id=inputs.frame_id,
-                rule_id="DEVICE_DETECTED",
-                label="Phone or external device detected",
+                rule_id="PERSON_PRESENT_NO_FACE",
+                label="Person visible but face not detected",
                 severity="high",
-                risk_score=risk,
+                risk_score=0.9,
                 started_at=state.started_at,
                 last_seen_at=state.last_seen_at,
                 evidence={
-                    "phone_detected": inputs.phone_detected,
+                    "face_count": inputs.face_count,
+                    "labels": self._extra_list(inputs, "labels"),
+                    "device_count": int((inputs.extra or {}).get("device_count", 0)),
+                },
+            ),
+        )
+
+    def _rule_phone_detected(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+        state = self._activate_if_true(
+            "PHONE_DETECTED",
+            inputs.phone_detected,
+            now,
+        )
+        if state is None:
+            return []
+        return self._emit_once_with_cooldown(
+            state,
+            now,
+            float(settings.PROCTOR_ALERT_COOLDOWN_SECONDS),
+            lambda: ProctoringAlert(
+                session_id=inputs.session_id,
+                frame_id=inputs.frame_id,
+                rule_id="PHONE_DETECTED",
+                label="Cell phone detected",
+                severity="high",
+                risk_score=0.92,
+                started_at=state.started_at,
+                last_seen_at=state.last_seen_at,
+                evidence={
                     "phone_confidence": round(float(inputs.phone_confidence), 3),
+                    "labels": [label for label in self._extra_list(inputs, "labels") if label in {"cell phone", "phone"}],
+                },
+            ),
+        )
+
+    def _rule_external_device_detected(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+        state = self._activate_if_true(
+            "EXTERNAL_DEVICE_DETECTED",
+            inputs.other_device_detected,
+            now,
+        )
+        if state is None:
+            return []
+        return self._emit_once_with_cooldown(
+            state,
+            now,
+            float(settings.PROCTOR_ALERT_COOLDOWN_SECONDS),
+            lambda: ProctoringAlert(
+                session_id=inputs.session_id,
+                frame_id=inputs.frame_id,
+                rule_id="EXTERNAL_DEVICE_DETECTED",
+                label="External device detected",
+                severity="high",
+                risk_score=0.72,
+                started_at=state.started_at,
+                last_seen_at=state.last_seen_at,
+                evidence={
                     "other_device_confidence": round(float(inputs.other_device_confidence), 3),
+                    "labels": [
+                        label
+                        for label in self._extra_list(inputs, "labels")
+                        if label in {"laptop", "tablet", "keyboard", "mouse", "remote"}
+                    ],
                 },
             ),
         )

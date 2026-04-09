@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import time
 import json
 from dataclasses import replace
@@ -24,7 +25,6 @@ from app.modules.proctoring.types import ProctoringAlert, ProctoringInputs
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
 DETECTION_CHANNELS: Dict[str, DetectionDataChannelManager] = {}
 _CLEANUP_SCHEDULED: set = set()  # Track which sessions have cleanup scheduled to prevent double-cleanup
-_CLEANUP_SCHEDULED: set = set()  # Track which sessions have cleanup scheduled
 
 class WebRTCService:
     def __init__(self):
@@ -145,9 +145,9 @@ class WebRTCService:
         labels = [str(getattr(d, "class_name", "")).lower() for d in yolo_detections]
         person_conf = self._max_confidence_for_classes(yolo_detections, {"person"})
         phone_conf = self._max_confidence_for_classes(yolo_detections, {"cell phone", "phone"})
-        device_conf = self._max_confidence_for_classes(
+        external_device_conf = self._max_confidence_for_classes(
             yolo_detections,
-            {"laptop", "tablet", "keyboard", "mouse", "remote", "cell phone", "phone"},
+            {"laptop", "tablet", "keyboard", "mouse", "remote"},
         )
         material_conf = self._max_confidence_for_classes(yolo_detections, {"book"})
 
@@ -167,8 +167,8 @@ class WebRTCService:
             rapid_hand_movement=False,
             phone_detected=phone_conf > 0.0,
             phone_confidence=phone_conf,
-            other_device_detected=device_conf > 0.0,
-            other_device_confidence=device_conf,
+            other_device_detected=external_device_conf > 0.0,
+            other_device_confidence=external_device_conf,
             unauthorized_materials_detected=material_conf > 0.0,
             unauthorized_materials_confidence=material_conf,
             multiple_persons_detected=int(face_analysis.get("person_count", 0)) > 1,
@@ -665,7 +665,9 @@ class WebRTCService:
         # Call manager.cleanup() before discarding
         if manager:
             try:
-                await manager.cleanup()
+                cleanup_result = manager.cleanup()
+                if inspect.isawaitable(cleanup_result):
+                    await cleanup_result
             except Exception as e:
                 logger.error(f"[DetectionChannel] Cleanup failed | session_id={session_id} | error={e}")
 
