@@ -1,6 +1,7 @@
 import asyncio
 import time
 import json
+from dataclasses import replace
 from typing import Dict, Tuple, Optional
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration
 
@@ -14,6 +15,9 @@ from app.common.exceptions import InvalidMessageError
 from app.core.config import settings
 from app.logger import logger
 from app.modules.monitoring.store import session_monitoring_store
+from app.modules.proctoring.engine import ProctoringEngine
+from app.modules.proctoring.flush_service import get_flush_service
+from app.modules.proctoring.types import ProctoringAlert, ProctoringInputs
 
 # Global state trackers
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
@@ -27,6 +31,7 @@ class WebRTCService:
         self.face_detector = MediaPipeFaceDetector()
         self.face_analyzers = {}
         self.data_channels = {}  # Direct references to aiortc channels
+        self.proctor_engines: dict[str, ProctoringEngine] = {}
 
     def _init_yolo_detector(self, session_id: str):
         """Initialize YOLO detector with settings"""
@@ -86,6 +91,122 @@ class WebRTCService:
         analyzer = FaceAnalyzer()
         self.face_analyzers[session_id] = analyzer
         return analyzer
+
+    def _get_or_create_proctor_engine(self, session_id: str) -> ProctoringEngine:
+        engine = self.proctor_engines.get(session_id)
+        if engine:
+            return engine
+        engine = ProctoringEngine(session_id=session_id)
+        self.proctor_engines[session_id] = engine
+        return engine
+
+    @staticmethod
+    def _normalize_gaze_direction(face_analysis: dict) -> Optional[str]:
+        zone_assessment = face_analysis.get("zone_assessment")
+        if isinstance(zone_assessment, dict):
+            status = str(zone_assessment.get("status", "")).lower()
+            if status in {"looking_away", "far_away"}:
+                return "away"
+            if status == "inside":
+                return "center"
+
+        faces = face_analysis.get("faces") or []
+        if not faces:
+            return None
+
+        eye_direction = faces[0].get("eye_direction")
+        if eye_direction is None:
+            return None
+        if eye_direction <= -0.12:
+            return "left"
+        if eye_direction >= 0.12:
+            return "right"
+        return "center"
+
+    @staticmethod
+    def _max_confidence_for_classes(yolo_detections: list, class_names: set[str]) -> float:
+        values = [
+            float(d.confidence)
+            for d in yolo_detections
+            if str(getattr(d, "class_name", "")).lower() in class_names
+        ]
+        return max(values, default=0.0)
+
+    def _build_proctoring_inputs(
+        self,
+        session_id: str,
+        frame_id: int,
+        face_analysis: dict,
+        yolo_detections: list,
+    ) -> ProctoringInputs:
+        faces = face_analysis.get("faces") or []
+        primary_face = faces[0] if faces else {}
+        labels = [str(getattr(d, "class_name", "")).lower() for d in yolo_detections]
+        person_conf = self._max_confidence_for_classes(yolo_detections, {"person"})
+        phone_conf = self._max_confidence_for_classes(yolo_detections, {"cell phone", "phone"})
+        device_conf = self._max_confidence_for_classes(
+            yolo_detections,
+            {"laptop", "tablet", "keyboard", "mouse", "remote", "cell phone", "phone"},
+        )
+        material_conf = self._max_confidence_for_classes(yolo_detections, {"book"})
+
+        return ProctoringInputs(
+            session_id=session_id,
+            frame_id=frame_id,
+            timestamp=time.time(),
+            face_count=int(face_analysis.get("face_count", 0)),
+            face_detected=bool(face_analysis.get("face_count", 0) > 0),
+            head_yaw=float(primary_face.get("head_yaw", 0.0) or 0.0),
+            gaze_direction=self._normalize_gaze_direction(face_analysis),
+            blink_rate_per_min=0.0,
+            sustained_eye_closure_s=0.0,
+            left_eye_closed=None,
+            right_eye_closed=None,
+            hands_visible_count=None,
+            rapid_hand_movement=False,
+            phone_detected=phone_conf > 0.0,
+            phone_confidence=phone_conf,
+            other_device_detected=device_conf > 0.0,
+            other_device_confidence=device_conf,
+            unauthorized_materials_detected=material_conf > 0.0,
+            unauthorized_materials_confidence=material_conf,
+            multiple_persons_detected=int(face_analysis.get("person_count", 0)) > 1,
+            multiple_persons_confidence=person_conf,
+            extra={
+                "raw_alerts": list(face_analysis.get("alerts") or []),
+                "zone_status": (face_analysis.get("zone_assessment") or {}).get("status"),
+                "labels": labels,
+                "device_count": int(face_analysis.get("device_count", 0)),
+            },
+        )
+
+    def _run_proctoring(
+        self,
+        session_id: str,
+        frame_id: int,
+        face_analysis: dict,
+        yolo_detections: list,
+    ) -> tuple[ProctoringInputs | None, list[ProctoringAlert]]:
+        if not getattr(settings, "PROCTORING_ENABLED", True):
+            return None, []
+
+        inputs = self._build_proctoring_inputs(
+            session_id=session_id,
+            frame_id=frame_id,
+            face_analysis=face_analysis,
+            yolo_detections=yolo_detections,
+        )
+        engine = self._get_or_create_proctor_engine(session_id)
+        alerts = engine.update(inputs)
+        suspicious = bool(alerts) or bool(face_analysis.get("alerts"))
+        highest_risk = max((float(alert.risk_score) for alert in alerts), default=0.0)
+        inputs = replace(
+            inputs,
+            risk_score=highest_risk,
+            suspicious=suspicious,
+        )
+        get_flush_service().submit_frame(inputs, alerts)
+        return inputs, alerts
 
     @staticmethod
     def _translate_face_current_view_to_original_frame(
@@ -182,9 +303,21 @@ class WebRTCService:
             crop_offset,
         )
         face_analysis = self._merge_detection_alerts(face_analysis, yolo_detections)
+        proctor_inputs, proctor_alerts = self._run_proctoring(
+            session_id=session_id,
+            frame_id=frame_id,
+            face_analysis=face_analysis,
+            yolo_detections=yolo_detections,
+        )
 
         self._send_combined_results(
-            session_id, frame_id, face_analysis, yolo_detections, crop_offset
+            session_id,
+            frame_id,
+            face_analysis,
+            yolo_detections,
+            crop_offset,
+            proctor_inputs,
+            proctor_alerts,
         )
 
     async def _receiver_task_loop(
@@ -361,6 +494,8 @@ class WebRTCService:
         face_analysis: dict,
         yolo_detections: list,
         crop_offset: CropOffset = None,
+        proctor_inputs: ProctoringInputs | None = None,
+        proctor_alerts: list[ProctoringAlert] | None = None,
     ):
         """Send detection results (MediaPipe + YOLO) to frontend via WebRTC data channel."""
         raw_channel = self.data_channels.get(session_id)
@@ -388,6 +523,26 @@ class WebRTCService:
                     "detections": frame_dict["detections"],
                 },
                 "crop_offset": frame_dict.get("crop_offset", {}),
+                "proctoring": {
+                    "enabled": bool(proctor_inputs is not None),
+                    "alert_count": len(proctor_alerts or []),
+                    "highest_risk": max(
+                        (float(alert.risk_score) for alert in (proctor_alerts or [])),
+                        default=0.0,
+                    ),
+                    "alerts": [
+                        {
+                            "rule_id": alert.rule_id,
+                            "label": alert.label,
+                            "severity": alert.severity,
+                            "risk_score": alert.risk_score,
+                            "started_at": alert.started_at,
+                            "last_seen_at": alert.last_seen_at,
+                            "evidence": alert.evidence,
+                        }
+                        for alert in (proctor_alerts or [])
+                    ],
+                },
             }
 
             logger.debug(
@@ -495,6 +650,7 @@ class WebRTCService:
         manager = DETECTION_CHANNELS.pop(session_id, None)
         self.data_channels.pop(session_id, None)
         analyzer = self.face_analyzers.pop(session_id, None)
+        self.proctor_engines.pop(session_id, None)
 
         # Call manager.cleanup() before discarding
         if manager:
