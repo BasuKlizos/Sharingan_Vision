@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     REDIS_DB: int = config("REDIS_DB", cast=int, default=0)
     REDIS_TIMEOUT: int = config("REDIS_TIMEOUT", cast=int, default=5)
     
+    # MongoDB
+    MONGODB_URI: str = config("MONGODB_URI", cast=str, default="mongodb://localhost:27017")
+    MONGODB_DB: str = config("MONGODB_DB", cast=str, default="sharingan_vision")
+    
     
     # WebSocket / Signaling
     WS_HEARTBEAT_INTERVAL: int = 30
@@ -56,6 +60,33 @@ class Settings(BaseSettings):
     YOLO_MODEL_PATH: str = config("YOLO_MODEL_PATH", default="yolov8n.pt")
     YOLO_CONF_THRESHOLD: float = config("YOLO_CONF_THRESHOLD", cast=float, default=0.25)
     YOLO_MAX_WIDTH: int = config("YOLO_MAX_WIDTH", cast=int, default=640)
+
+    # Proctoring
+    PROCTORING_ENABLED: bool = config("PROCTORING_ENABLED", cast=bool, default=True)
+    PROCTOR_STORE_BACKEND: str = config("PROCTOR_STORE_BACKEND", cast=str, default="dual")
+    PROCTOR_METRICS_COLLECTION: str = config("PROCTOR_METRICS_COLLECTION", cast=str, default="proctor_metrics")
+    PROCTOR_ALERTS_COLLECTION: str = config("PROCTOR_ALERTS_COLLECTION", cast=str, default="proctor_alerts")
+    PROCTOR_FLUSH_BATCH_SIZE: int = config("PROCTOR_FLUSH_BATCH_SIZE", cast=int, default=25)
+    PROCTOR_FLUSH_INTERVAL_SECONDS: float = config("PROCTOR_FLUSH_INTERVAL_SECONDS", cast=float, default=1.5)
+    PROCTOR_FLUSH_QUEUE_SIZE: int = config("PROCTOR_FLUSH_QUEUE_SIZE", cast=int, default=2000)
+    PROCTOR_REDIS_MAX_ITEMS: int = config("PROCTOR_REDIS_MAX_ITEMS", cast=int, default=500)
+    PROCTOR_METRIC_SAMPLE_SECONDS: float = config("PROCTOR_METRIC_SAMPLE_SECONDS", cast=float, default=2.0)
+    PROCTOR_SUSPICIOUS_SAMPLE_SECONDS: float = config("PROCTOR_SUSPICIOUS_SAMPLE_SECONDS", cast=float, default=0.5)
+    PROCTOR_HIGH_RISK_THRESHOLD: float = config("PROCTOR_HIGH_RISK_THRESHOLD", cast=float, default=0.65)
+    PROCTOR_METRICS_TTL_SECONDS: int = config("PROCTOR_METRICS_TTL_SECONDS", cast=int, default=604800)
+    PROCTOR_ALERT_COOLDOWN_SECONDS: float = config("PROCTOR_ALERT_COOLDOWN_SECONDS", cast=float, default=10.0)
+    PROCTOR_NO_FACE_SECONDS: float = config("PROCTOR_NO_FACE_SECONDS", cast=float, default=3.0)
+    PROCTOR_HEAD_AWAY_SECONDS: float = config("PROCTOR_HEAD_AWAY_SECONDS", cast=float, default=2.5)
+    PROCTOR_GAZE_AWAY_SECONDS: float = config("PROCTOR_GAZE_AWAY_SECONDS", cast=float, default=2.0)
+    PROCTOR_HANDS_HIDDEN_SECONDS: float = config("PROCTOR_HANDS_HIDDEN_SECONDS", cast=float, default=3.0)
+    PROCTOR_DEVICE_HOLD_SECONDS: float = config("PROCTOR_DEVICE_HOLD_SECONDS", cast=float, default=1.0)
+    PROCTOR_MATERIAL_HOLD_SECONDS: float = config("PROCTOR_MATERIAL_HOLD_SECONDS", cast=float, default=1.0)
+    PROCTOR_MULTI_FACE_HOLD_SECONDS: float = config("PROCTOR_MULTI_FACE_HOLD_SECONDS", cast=float, default=1.0)
+    PROCTOR_HEAD_YAW_THRESHOLD: float = config("PROCTOR_HEAD_YAW_THRESHOLD", cast=float, default=0.35)
+    PROCTOR_BLINK_RATE_THRESHOLD: float = config("PROCTOR_BLINK_RATE_THRESHOLD", cast=float, default=35.0)
+    PROCTOR_EYE_CLOSURE_SECONDS: float = config("PROCTOR_EYE_CLOSURE_SECONDS", cast=float, default=2.0)
+    PROCTOR_EYE_CLOSURE_REPEAT_WINDOW_SECONDS: float = config("PROCTOR_EYE_CLOSURE_REPEAT_WINDOW_SECONDS", cast=float, default=10.0)
+    PROCTOR_EYE_CLOSURE_REPEAT_COUNT: int = config("PROCTOR_EYE_CLOSURE_REPEAT_COUNT", cast=int, default=3)
 
     # Lighting Precheck
     PRECHECK_MIN_BRIGHTNESS: float = config("PRECHECK_MIN_BRIGHTNESS", cast=float, default=70.0)

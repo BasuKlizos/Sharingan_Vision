@@ -81,34 +81,6 @@ async def save_calibration(payload: dict = Body(...)):
         "latestZoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
     }
 
-
-@router.post("/violation-event")
-async def create_violation_event(payload: dict = Body(...)):
-    try:
-        request = ViolationEventRequest.model_validate(payload)
-    except ValidationError as exc:
-        return _validation_error_response("Invalid violation payload", exc)
-
-    session = session_monitoring_store.get_session(request.session_id)
-    if session is None:
-        return _error_response(status.HTTP_404_NOT_FOUND, "Session not found")
-
-    if session.calibration is None:
-        return _error_response(status.HTTP_409_CONFLICT, "Calibration missing for session")
-
-    session_monitoring_store.create_violation_event(request)
-
-    logger.info(
-        "[Violation] Stored event | session_id=%s count=%s gaze_x=%.2f gaze_y=%.2f",
-        request.session_id,
-        session.violation_count,
-        request.point.x,
-        request.point.y,
-    )
-
-    return {"success": True}
-
-
 @router.post("/current-view")
 async def update_current_view(payload: dict = Body(...)):
     logger.info("[CurrentView] Incoming update request")

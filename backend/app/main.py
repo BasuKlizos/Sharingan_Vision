@@ -4,18 +4,29 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.logger import logger
 from app.middleware.log_middleware import log_request_middleware
+from app.core.mongodb import mongo_manager
 from app.core.redis import redis_manager
 from app.api.monitoring import router as monitoring_router
 from app.api.router import api_router
-from app.core.config import settings    
+from app.core.config import settings
+from app.modules.proctoring.flush_service import get_flush_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    mongo_enabled = settings.PROCTOR_STORE_BACKEND.strip().lower() in {"mongo", "dual"}
     logger.info("Connecting to Redis...")
     await redis_manager.connect()
+    if mongo_enabled:
+        logger.info("Connecting to MongoDB...")
+        await mongo_manager.connect()
+    await get_flush_service().start()
 
     yield
 
+    await get_flush_service().stop()
+    if mongo_enabled:
+        logger.info("Disconnecting MongoDB...")
+        await mongo_manager.disconnect()
     logger.info("Disconnecting Redis...")
     await redis_manager.disconnect()
 
@@ -54,7 +65,7 @@ async def ping():
     Returns:
         dict: {"message": "pong"}
     """
-    redis_client = await redis_manager.get_client()
+    redis_client = redis_manager.get_client()
     return {"message": "pong"}
 
 
