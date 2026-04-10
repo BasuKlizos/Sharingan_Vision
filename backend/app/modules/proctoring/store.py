@@ -36,8 +36,8 @@ class ProctoringRedisStore:
     """
 
     @staticmethod
-    def _alert_events_key(session_id: str) -> str:
-        return f"proctor:alerts:{session_id}:events"
+    def _alerts_key(session_id: str) -> str:
+        return f"proctor:alerts:{session_id}:alerts"
 
     @staticmethod
     def _alert_meta_key(session_id: str) -> str:
@@ -46,10 +46,6 @@ class ProctoringRedisStore:
     @staticmethod
     def _metrics_summary_key(session_id: str) -> str:
         return f"proctor:metrics:{session_id}:summary"
-
-    @staticmethod
-    def _metrics_alerts_key(session_id: str) -> str:
-        return f"proctor:metrics:{session_id}:alerts"
 
     async def ensure_ready(self) -> None:
         return None
@@ -134,21 +130,10 @@ class ProctoringRedisStore:
                         "occurrence_count": int(item.occurrence_count),
                         "evidence": asdict(item).get("evidence", {}),
                     }
-                    events_key = self._alert_events_key(item.session_id)
+                    alerts_key = self._alerts_key(item.session_id)
                     meta_key = self._alert_meta_key(item.session_id)
-                    metrics_alerts_key = self._metrics_alerts_key(item.session_id)
-                    metrics_alert = {
-                        "timestamp": item.last_seen_at,
-                        "alert_type": item.rule_id,
-                        "label": item.label,
-                        "severity": item.severity,
-                        "risk_score": item.risk_score,
-                        "frame_id": item.frame_id,
-                    }
-                    pipe.lpush(events_key, json.dumps(event, default=str))
-                    pipe.ltrim(events_key, 0, cache_limit - 1)
-                    pipe.lpush(metrics_alerts_key, json.dumps(metrics_alert, default=str))
-                    pipe.ltrim(metrics_alerts_key, 0, cache_limit - 1)
+                    pipe.lpush(alerts_key, json.dumps(event, default=str))
+                    pipe.ltrim(alerts_key, 0, cache_limit - 1)
                     pipe.hincrby(meta_key, "total_alert_count", int(item.occurrence_count))
                     pipe.hincrby(meta_key, f"alert_type_count:{item.rule_id}", int(item.occurrence_count))
                     pipe.hset(
@@ -186,6 +171,7 @@ class ProctoringMongoStore:
         return {
             "cumulative_face_count": "",
             "cumulative_risk_score": "",
+            "events": "",
             "face_detected_samples": "",
             "last_face_count": "",
             "last_face_detected": "",
@@ -312,15 +298,14 @@ class ProctoringMongoStore:
                 sorted_items = sorted(session_items, key=lambda alert: (alert.last_seen_at, alert.frame_id))
                 first_item = sorted_items[0]
                 last_item = sorted_items[-1]
-                events = []
+                alerts = []
                 inc_counts: dict[str, int] = {
                     "total_alert_count": 0,
                     "alert_summary.total_count": 0,
                 }
-                metrics_alerts = []
 
                 for item in sorted_items:
-                    events.append(
+                    alerts.append(
                         {
                             "timestamp": item.last_seen_at,
                             "frame_id": item.frame_id,
@@ -332,16 +317,6 @@ class ProctoringMongoStore:
                             "last_seen_at": item.last_seen_at,
                             "occurrence_count": int(item.occurrence_count),
                             "evidence": asdict(item).get("evidence", {}),
-                        }
-                    )
-                    metrics_alerts.append(
-                        {
-                            "timestamp": item.last_seen_at,
-                            "alert_type": item.rule_id,
-                            "label": item.label,
-                            "severity": item.severity,
-                            "risk_score": item.risk_score,
-                            "frame_id": item.frame_id,
                         }
                     )
                     inc_counts["total_alert_count"] += int(item.occurrence_count)
@@ -391,8 +366,7 @@ class ProctoringMongoStore:
                             },
                             "$inc": inc_counts,
                             "$push": {
-                                "events": {"$each": events, "$slice": -history_limit},
-                                "alerts": {"$each": metrics_alerts, "$slice": -history_limit},
+                                "alerts": {"$each": alerts, "$slice": -history_limit},
                             },
                             "$unset": self._legacy_metrics_flat_fields(),
                         },
