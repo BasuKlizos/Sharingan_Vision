@@ -26,6 +26,10 @@ def _iso_datetime(value: float | int | None) -> str | None:
     return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class ProctoringRedisStore:
     """
     Fast-access cache store.
@@ -222,6 +226,7 @@ class ProctoringMongoStore:
 
             operations = []
             for session_id, session_items in grouped.items():
+                write_timestamp = _utc_now()
                 sorted_items = sorted(session_items, key=lambda metric: (metric.timestamp, metric.frame_id))
                 first_item = sorted_items[0]
                 last_item = sorted_items[-1]
@@ -250,13 +255,13 @@ class ProctoringMongoStore:
                             "$setOnInsert": {
                                 "session_id": session_id,
                                 "doc_kind": self._SUMMARY_DOC_KIND,
-                                "created_at": _iso_datetime(first_item.timestamp),
+                                "created_at": write_timestamp,
                                 "alerts": [],
                                 "alert_summary.total_count": 0,
                                 "alert_summary.by_type": {},
                             },
                             "$set": {
-                                "updated_at": _iso_datetime(last_item.timestamp),
+                                "updated_at": write_timestamp,
                                 "latest.timestamp": last_item.timestamp,
                                 "latest.frame_id": last_item.frame_id,
                                 "latest.face_count": last_item.face_count,
@@ -303,6 +308,7 @@ class ProctoringMongoStore:
 
             operations = []
             for session_id, session_items in grouped.items():
+                write_timestamp = _utc_now()
                 sorted_items = sorted(session_items, key=lambda alert: (alert.last_seen_at, alert.frame_id))
                 first_item = sorted_items[0]
                 last_item = sorted_items[-1]
@@ -353,7 +359,7 @@ class ProctoringMongoStore:
                             "$setOnInsert": {
                                 "session_id": session_id,
                                 "doc_kind": self._SUMMARY_DOC_KIND,
-                                "created_at": _iso_datetime(first_item.started_at),
+                                "created_at": write_timestamp,
                                 "latest.timestamp": None,
                                 "latest.frame_id": None,
                                 "latest.face_count": 0,
@@ -376,7 +382,7 @@ class ProctoringMongoStore:
                                 "metadata.first_alert_at": _iso_datetime(first_item.started_at),
                             },
                             "$set": {
-                                "updated_at": _iso_datetime(last_item.last_seen_at),
+                                "updated_at": write_timestamp,
                                 "metadata.updated_at": _iso_datetime(last_item.last_seen_at),
                                 "metadata.last_alert_at": _iso_datetime(last_item.last_seen_at),
                                 "metadata.last_frame_id": last_item.frame_id,
