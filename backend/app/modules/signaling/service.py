@@ -265,10 +265,6 @@ class WebRTCService:
                 try:
                     zone_assessment = session.latest_zone_assessment
                     face_analysis["zone_assessment"] = zone_assessment
-                    if session.latest_current_view is not None:
-                        face_analysis["webrtc_current_view"] = session.latest_current_view.model_dump(
-                            by_alias=True
-                        )
 
                 except Exception as exc:
                     logger.warning(
@@ -313,7 +309,7 @@ class WebRTCService:
             crop_offset,
         )
         face_analysis = self._merge_detection_alerts(face_analysis, yolo_detections)
-        proctor_inputs, proctor_alerts = self._run_proctoring(
+        self._run_proctoring(
             session_id=session_id,
             frame_id=frame_id,
             face_analysis=face_analysis,
@@ -326,8 +322,6 @@ class WebRTCService:
             face_analysis,
             yolo_detections,
             crop_offset,
-            proctor_inputs,
-            proctor_alerts,
         )
 
     async def _receiver_task_loop(
@@ -504,8 +498,6 @@ class WebRTCService:
         face_analysis: dict,
         yolo_detections: list,
         crop_offset: CropOffset = None,
-        proctor_inputs: ProctoringInputs | None = None,
-        proctor_alerts: list[ProctoringAlert] | None = None,
     ):
         """Send detection results (MediaPipe + YOLO) to frontend via WebRTC data channel."""
         raw_channel = self.data_channels.get(session_id)
@@ -533,26 +525,6 @@ class WebRTCService:
                     "detections": frame_dict["detections"],
                 },
                 "crop_offset": frame_dict.get("crop_offset", {}),
-                "proctoring": {
-                    "enabled": bool(proctor_inputs is not None),
-                    "alert_count": len(proctor_alerts or []),
-                    "highest_risk": max(
-                        (float(alert.risk_score) for alert in (proctor_alerts or [])),
-                        default=0.0,
-                    ),
-                    "alerts": [
-                        {
-                            "rule_id": alert.rule_id,
-                            "label": alert.label,
-                            "severity": alert.severity,
-                            "risk_score": alert.risk_score,
-                            "started_at": alert.started_at,
-                            "last_seen_at": alert.last_seen_at,
-                            "evidence": alert.evidence,
-                        }
-                        for alert in (proctor_alerts or [])
-                    ],
-                },
             }
 
             logger.debug(

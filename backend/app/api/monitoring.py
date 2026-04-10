@@ -8,8 +8,6 @@ from app.logger import logger
 from app.modules.monitoring.schemas import (
     CalibrationData,
     CalibrationSaveRequest,
-    CurrentViewUpdateRequest,
-    ViolationEventRequest,
 )
 from app.modules.monitoring.store import session_monitoring_store, utc_now
 
@@ -77,43 +75,4 @@ async def save_calibration(payload: dict = Body(...)):
     return {
         "success": True,
         "sessionId": request.session_id,
-        "zoneDefinition": updated_session.calibration_zone_definition if updated_session else None,
-        "latestZoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
-    }
-
-@router.post("/current-view")
-async def update_current_view(payload: dict = Body(...)):
-    logger.info("[CurrentView] Incoming update request")
-    try:
-        request = CurrentViewUpdateRequest.model_validate(payload)
-    except ValidationError as exc:
-        return _validation_error_response("Invalid current view payload", exc)
-
-    session = session_monitoring_store.get_session(request.session_id)
-    if session is None:
-        return _error_response(status.HTTP_404_NOT_FOUND, "Session not found")
-
-    updated_session = session_monitoring_store.update_current_view(request)
-
-    logger.info(
-        "[CurrentView] Stored snapshot | session_id=%s min_x=%.2f max_x=%.2f min_y=%.2f max_y=%.2f",
-        request.session_id,
-        request.current_view.min_x,
-        request.current_view.max_x,
-        request.current_view.min_y,
-        request.current_view.max_y,
-    )
-
-    if updated_session and updated_session.latest_zone_assessment:
-        zone_assessment = updated_session.latest_zone_assessment
-        logger.info(
-            "[CurrentView] Zone assessment | session_id=%s status=%s drift_percent=%.2f",
-            request.session_id,
-            zone_assessment["status"],
-            zone_assessment["driftPercent"],
-        )
-
-    return {
-        "success": True,
-        "zoneAssessment": updated_session.latest_zone_assessment if updated_session else None,
     }
