@@ -258,6 +258,22 @@ class WebRTCService:
         if person_count >= 1 and face_count == 0:
             alerts.append("PERSON_PRESENT_NO_FACE")
 
+        # Check for detected objects and add alerts
+        phone_conf = self._max_confidence_for_classes(yolo_detections, {"cell phone", "phone"})
+        if phone_conf > 0.0:
+            alerts.append("PHONE_DETECTED")
+
+        external_device_conf = self._max_confidence_for_classes(
+            yolo_detections,
+            {"laptop", "tablet", "keyboard", "mouse", "remote"},
+        )
+        if external_device_conf > 0.0:
+            alerts.append("EXTERNAL_DEVICE_DETECTED")
+
+        material_conf = self._max_confidence_for_classes(yolo_detections, {"book"})
+        if material_conf > 0.0:
+            alerts.append("UNAUTHORIZED_MATERIAL_DETECTED")
+
         session_id = face_analysis.get("session_id")
         if session_id:
             session = session_monitoring_store.get_session(session_id)
