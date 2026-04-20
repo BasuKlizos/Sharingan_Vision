@@ -19,7 +19,7 @@ async def log_request_middleware(request: Request, call_next):
         response: Response = await call_next(request)
     except Exception:
         logger.exception(
-            f"[{request_id}] {host} - \"{request.method} {url}\" 500 Internal Server Error",
+            f'[{request_id}] {host} - "{request.method} {url}" 500 Internal Server Error',
             extra={"hide_src": True},
         )
         raise
@@ -28,7 +28,7 @@ async def log_request_middleware(request: Request, call_next):
     status_phrase = http.HTTPStatus(response.status_code).phrase
 
     logger.info(
-        f"[{request_id}] {host} - \"{request.method} {url}\" "
+        f'[{request_id}] {host} - "{request.method} {url}" '
         f"{response.status_code} {status_phrase} {elapsed_ms:.2f} ms",
         extra={"hide_src": True},
     )

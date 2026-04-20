@@ -55,3 +55,6 @@ backend/logs/*
 models/
 
 .codex
+
+# === Tooling caches ===
+.ruff_cache/

@@ -137,9 +137,15 @@ class LightingPrecheckService:
             )
 
         return LightingSummary(
-            brightness_mean=round(statistics.median(m["brightness_mean"] for m in valid_metrics), 2),
-            dark_pixel_ratio=round(statistics.median(m["dark_pixel_ratio"] for m in valid_metrics), 4),
-            bright_pixel_ratio=round(statistics.median(m["bright_pixel_ratio"] for m in valid_metrics), 4),
+            brightness_mean=round(
+                statistics.median(m["brightness_mean"] for m in valid_metrics), 2
+            ),
+            dark_pixel_ratio=round(
+                statistics.median(m["dark_pixel_ratio"] for m in valid_metrics), 4
+            ),
+            bright_pixel_ratio=round(
+                statistics.median(m["bright_pixel_ratio"] for m in valid_metrics), 4
+            ),
             min_brightness=self.min_brightness,
             max_brightness=self.max_brightness,
             max_dark_ratio=self.max_dark_ratio,
@@ -157,15 +163,14 @@ class LightingPrecheckService:
         if summary.brightness_mean is None:
             return False, self.STATUS_INVALID_FRAMES
 
-        if (
-            summary.brightness_mean < self.min_brightness
-            or (summary.dark_pixel_ratio is not None and summary.dark_pixel_ratio > self.max_dark_ratio)
+        if summary.brightness_mean < self.min_brightness or (
+            summary.dark_pixel_ratio is not None and summary.dark_pixel_ratio > self.max_dark_ratio
         ):
             return False, self.STATUS_TOO_DARK
 
-        if (
-            summary.brightness_mean > self.max_brightness
-            or (summary.bright_pixel_ratio is not None and summary.bright_pixel_ratio > self.max_bright_ratio)
+        if summary.brightness_mean > self.max_brightness or (
+            summary.bright_pixel_ratio is not None
+            and summary.bright_pixel_ratio > self.max_bright_ratio
         ):
             return False, self.STATUS_TOO_BRIGHT
 

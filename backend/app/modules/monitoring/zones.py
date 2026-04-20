@@ -4,7 +4,6 @@ from typing import Any
 
 from app.modules.monitoring.schemas import CalibrationData, CurrentViewData
 
-
 GOOD_ZONE_THRESHOLD = 0.30
 LOOKING_AWAY_THRESHOLD = 0.55
 FAR_AWAY_THRESHOLD = 0.80

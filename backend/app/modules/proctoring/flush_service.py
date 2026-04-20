@@ -113,7 +113,9 @@ class ProctoringFlushService:
 
     def _should_store_metric(self, item: ProctoringInputs) -> bool:
         state = self._metric_sampling.setdefault(item.session_id, _MetricSamplingState())
-        suspicious = bool(item.suspicious) or float(item.risk_score) >= float(settings.PROCTOR_HIGH_RISK_THRESHOLD)
+        suspicious = bool(item.suspicious) or float(item.risk_score) >= float(
+            settings.PROCTOR_HIGH_RISK_THRESHOLD
+        )
         if suspicious:
             min_interval = float(settings.PROCTOR_SUSPICIOUS_SAMPLE_SECONDS)
             if (item.timestamp - state.last_suspicious_at) < min_interval:

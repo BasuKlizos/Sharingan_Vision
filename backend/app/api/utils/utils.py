@@ -1,5 +1,6 @@
 import uuid
 
+
 def generate_session_id() -> str:
     """
     Generate a unique session identifier.

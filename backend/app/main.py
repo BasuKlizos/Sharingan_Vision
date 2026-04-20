@@ -11,6 +11,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.modules.proctoring.flush_service import get_flush_service
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mongo_enabled = settings.PROCTOR_STORE_BACKEND.strip().lower() in {"mongo", "dual"}
@@ -45,7 +46,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     # allow_origins=["http://localhost:3000"], # frontend Origin
-    allow_origins=["*"], # frontend Origin
+    allow_origins=["*"],  # frontend Origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +58,7 @@ app.middleware("http")(log_request_middleware)
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(monitoring_router, prefix="/api", tags=["Gaze Monitoring"])
 
+
 @app.get("/ping")
 async def ping():
     """
@@ -65,7 +67,7 @@ async def ping():
     Returns:
         dict: {"message": "pong"}
     """
-    redis_client = redis_manager.get_client()
+    redis_manager.get_client()
     return {"message": "pong"}
 
 

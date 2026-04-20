@@ -38,7 +38,7 @@ class YoloDetector:
         self._model = YOLO(self._model_path)
         load_time = time.time() - load_start
         logger.info(f"[YOLO] Model loaded | time={load_time:.2f}s")
-        
+
         # Warm up the model with dummy inference to avoid first-run stall
         if not self._warmup_done:
             self._warmup_model()
@@ -47,18 +47,14 @@ class YoloDetector:
         """Run dummy inference to warm up model and avoid first-call stalls"""
         try:
             import numpy as np
+
             logger.debug("[YOLO] Starting model warm-up...")
             warmup_start = time.time()
-            
+
             # Small dummy image to warm up
             dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-            self._model.predict(
-                dummy,
-                conf=self._conf_threshold,
-                verbose=False,
-                device="cpu"
-            )
-            
+            self._model.predict(dummy, conf=self._conf_threshold, verbose=False, device="cpu")
+
             warmup_time = time.time() - warmup_start
             logger.info(f"[YOLO] Model warm-up complete | time={warmup_time:.2f}s")
             self._warmup_done = True
@@ -66,7 +62,9 @@ class YoloDetector:
             logger.error(f"[YOLO] Warm-up failed | error={e}")
             self._warmup_done = False
 
-    def detect(self, img_rgb: bytes, *, conf_threshold: Optional[float] = None) -> List[YoloDetection]:
+    def detect(
+        self, img_rgb: bytes, *, conf_threshold: Optional[float] = None
+    ) -> List[YoloDetection]:
         """
         Args:
             img_rgb: OpenCV RGB image (numpy array HxWx3 uint8)
@@ -78,13 +76,10 @@ class YoloDetector:
         logger.debug(f"[YOLO] Running inference | conf_threshold={threshold}")
 
         inference_start = time.time()
-        
+
         # ultralytics returns a list of Results objects
         results = self._model.predict(
-            img_rgb,
-            conf=threshold,
-            verbose=False,
-            device="cpu"  # Force CPU for stability
+            img_rgb, conf=threshold, verbose=False, device="cpu"  # Force CPU for stability
         )
 
         inference_time = time.time() - inference_start
@@ -119,5 +114,7 @@ class YoloDetector:
                     )
                 )
 
-        logger.debug(f"[YOLO] Inference complete | detections={len(detections)} time={inference_time:.3f}s")
+        logger.debug(
+            f"[YOLO] Inference complete | detections={len(detections)} time={inference_time:.3f}s"
+        )
         return detections

@@ -4,7 +4,7 @@ import asyncio
 from redis.asyncio import Redis
 from app.core.config import settings
 from app.core.singleton import SingletonMeta
-from app.logger import logger
+
 
 class RedisClient(metaclass=SingletonMeta):
     """

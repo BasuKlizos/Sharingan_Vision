@@ -1,6 +1,7 @@
 """
 WebRTC Data Channel Manager for sending detection data to frontend
 """
+
 import json
 import asyncio
 from typing import Optional
@@ -13,41 +14,37 @@ from app.modules.monitoring.store import session_monitoring_store
 
 class DetectionDataChannelManager:
     """Manages sending detection data through WebRTC data channel"""
-    
+
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.channel: Optional[RTCDataChannel] = None
         self.is_ready = False
-        
+
     def set_channel(self, channel: RTCDataChannel):
         """Set the data channel reference"""
         self.channel = channel
-        
+
         @channel.on("open")
         def on_open():
             self.is_ready = True
-            logger.info(
-                f"[DetectionChannel] CHANNEL OPENED | session_id={self.session_id}"
-            )
-        
+            logger.info(f"[DetectionChannel] CHANNEL OPENED | session_id={self.session_id}")
+
         @channel.on("error")
         def on_error(error):
             logger.error(
                 f"[DetectionChannel] CHANNEL ERROR | session_id={self.session_id} | "
                 f"error={error} | channel_state={channel.readyState}"
             )
-        
+
         @channel.on("close")
         def on_close():
             self.is_ready = False
-            logger.warning(
-                f"[DetectionChannel] CHANNEL CLOSED | session_id={self.session_id}"
-            )
+            logger.warning(f"[DetectionChannel] CHANNEL CLOSED | session_id={self.session_id}")
 
         @channel.on("message")
         def on_message(message):
             self._handle_incoming_message(message)
-        
+
         # If channel is already open (unlikely but possible), mark as ready
         if channel.readyState == "open":
             self.is_ready = True
@@ -107,11 +104,12 @@ class DetectionDataChannelManager:
                 f"status={zone_assessment['status']} "
                 f"drift_percent={zone_assessment['driftPercent']:.2f}"
             )
+
     async def cleanup(self):
         """Clean up resources"""
         if self.channel:
             close_result = self.channel.close()
             if asyncio.iscoroutine(close_result):
                 await close_result
-        
+
         logger.info(f"[DetectionChannel] Cleaned up | session_id={self.session_id}")

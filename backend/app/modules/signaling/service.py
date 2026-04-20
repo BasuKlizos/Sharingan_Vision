@@ -13,7 +13,6 @@ from app.modules.detection.mediapipe_face import MediaPipeFaceDetector
 from app.modules.analytics.face_analyzer import FaceAnalyzer
 from app.modules.monitoring.schemas import CurrentViewData
 from app.api.utils.utils import generate_session_id
-from app.common.exceptions import InvalidMessageError
 from app.core.config import settings
 from app.logger import logger
 from app.modules.monitoring.store import session_monitoring_store
@@ -24,7 +23,10 @@ from app.modules.proctoring.types import ProctoringAlert, ProctoringInputs
 # Global state trackers
 PEER_CONNECTIONS: Dict[str, RTCPeerConnection] = {}
 DETECTION_CHANNELS: Dict[str, DetectionDataChannelManager] = {}
-_CLEANUP_SCHEDULED: set = set()  # Track which sessions have cleanup scheduled to prevent double-cleanup
+_CLEANUP_SCHEDULED: set = (
+    set()
+)  # Track which sessions have cleanup scheduled to prevent double-cleanup
+
 
 class WebRTCService:
     def __init__(self):
@@ -43,7 +45,7 @@ class WebRTCService:
 
     def _calculate_crop_offset(self, img, crop_enabled: bool = False) -> Tuple[any, CropOffset]:
         """Apply cropping if enabled and return cropped image with offset info
-        
+
         Returns:
             Tuple of (cropped_image, CropOffset object)
         """
@@ -54,34 +56,34 @@ class WebRTCService:
             cropped_width=w,
             cropped_height=h,
             x_offset=0,
-            y_offset=0
+            y_offset=0,
         )
-        
+
         # If cropping is enabled, apply it (e.g., crop center 80% of image)
         if crop_enabled and getattr(settings, "ENABLE_CROP", False):
             crop_percent = float(getattr(settings, "CROP_PERCENT", 0.8))
             crop_w = int(w * crop_percent)
             crop_h = int(h * crop_percent)
-            
+
             # Center crop
             x_start = (w - crop_w) // 2
             y_start = (h - crop_h) // 2
             x_end = x_start + crop_w
             y_end = y_start + crop_h
-            
+
             cropped_img = img[y_start:y_end, x_start:x_end]
-            
+
             crop_offset = CropOffset(
                 original_width=w,
                 original_height=h,
                 cropped_width=crop_w,
                 cropped_height=crop_h,
                 x_offset=x_start,
-                y_offset=y_start
+                y_offset=y_start,
             )
-            
+
             return cropped_img, crop_offset
-        
+
         return img, crop_offset
 
     def _get_or_create_face_analyzer(self, session_id: str) -> FaceAnalyzer:
@@ -247,10 +249,10 @@ class WebRTCService:
         # Filter the list to only count actual people
         actual_people = [d for d in yolo_detections if d.class_name == "person"]
         person_count = len(actual_people)
-        
+
         # You can also count the devices separately if you need them!
         device_count = len(yolo_detections) - person_count
-        
+
         face_count = face_analysis.get("face_count", 0)
         alerts = list(face_analysis.get("alerts") or [])
 
@@ -261,7 +263,11 @@ class WebRTCService:
         session_id = face_analysis.get("session_id")
         if session_id:
             session = session_monitoring_store.get_session(session_id)
-            if session and session.calibration is not None and session.latest_zone_assessment is not None:
+            if (
+                session
+                and session.calibration is not None
+                and session.latest_zone_assessment is not None
+            ):
                 try:
                     zone_assessment = session.latest_zone_assessment
                     face_analysis["zone_assessment"] = zone_assessment
@@ -270,9 +276,9 @@ class WebRTCService:
                     logger.warning(
                         f"[Send] Failed to assess zone alert | session_id={session_id} error={exc}"
                     )
-            
+
         face_analysis["person_count"] = person_count
-        face_analysis["device_count"] = device_count # Helpful for your electronics focus!
+        face_analysis["device_count"] = device_count  # Helpful for your electronics focus!
         face_analysis["alerts"] = list(set(alerts))
         return face_analysis
 
@@ -303,7 +309,7 @@ class WebRTCService:
                     f"[Process] Failed to update current view from face analysis | "
                     f"session_id={session_id} frame_id={frame_id} error={exc}"
                 )
-        
+
         face_analysis = self._translate_face_current_view_to_original_frame(
             face_analysis,
             crop_offset,
@@ -407,15 +413,16 @@ class WebRTCService:
         session_id: str,
     ) -> None:
         done, pending = await asyncio.wait(
-            {receiver, processor},
-            return_when=asyncio.FIRST_COMPLETED
+            {receiver, processor}, return_when=asyncio.FIRST_COMPLETED
         )
 
         for task in done:
             try:
                 await task
             except Exception as e:
-                logger.error(f"[Detection] Task failed with error | session_id={session_id} error={e}")
+                logger.error(
+                    f"[Detection] Task failed with error | session_id={session_id} error={e}"
+                )
                 for pending_task in pending:
                     pending_task.cancel()
                 await asyncio.gather(*pending, return_exceptions=True)
@@ -427,20 +434,20 @@ class WebRTCService:
     async def _process_video_track(self, track, session_id: str):
         """
         Real-time detection pipeline with 2-task architecture:
-        
+
         Task 1 (Receiver):
         - Continuously receives frames from WebRTC track
         - Stores only the latest frame in memory
         - Old unprocessed frames are automatically dropped
         - Runs independently at WebRTC frame rate (~30 FPS from browser)
-        
-        Task 2 (Processor):  
+
+        Task 2 (Processor):
         - Runs periodically at configured DETECTION_FPS (e.g., 1, 2, 5, 10)
         - Grabs the latest available frame
         - Runs MediaPipe + YOLO in parallel
         - Sends results to frontend
         - Skips if no new frame is available
-        
+
         This ensures:
         - Fresh frames are always processed (not old stale ones)
         - No buildup of frame queues
@@ -450,10 +457,10 @@ class WebRTCService:
         detection_fps = int(getattr(settings, "DETECTION_FPS", 10))
         enable_yolo = getattr(settings, "ENABLE_YOLO", False)
         enable_crop = getattr(settings, "ENABLE_CROP", False)
-        
+
         # Initialize detectors
         yolo_detector = self._init_yolo_detector(session_id) if enable_yolo else None
-        
+
         # Shared state between receiver and processor tasks
         frame_state = {"latest_frame": None}
         frame_lock = asyncio.Lock()
@@ -478,7 +485,7 @@ class WebRTCService:
                 stop_processing=stop_processing,
             )
         )
-        
+
         try:
             await self._await_detection_tasks(receiver, processor, session_id)
         except asyncio.CancelledError:
@@ -519,7 +526,8 @@ class WebRTCService:
                 "type": "detection_frame",
                 "frame_id": frame_id,
                 "timestamp": frame_dict["timestamp"],
-                "face": face_analysis or {"alerts": [], "faces": [], "face_count": 0, "person_count": 0},
+                "face": face_analysis
+                or {"alerts": [], "faces": [], "face_count": 0, "person_count": 0},
                 "yolo": {
                     "detection_count": frame_dict["detection_count"],
                     "detections": frame_dict["detections"],
@@ -549,7 +557,6 @@ class WebRTCService:
         except Exception as e:
             logger.error(f"[Send] Failed | session_id={session_id} error={e}")
 
-
     def _setup_track_handlers(self, pc: RTCPeerConnection, session_id: str):
         @pc.on("track")
         def on_track(track):
@@ -559,7 +566,7 @@ class WebRTCService:
             @track.on("ended")
             async def on_ended():
                 # Cancel the processing task to prevent resource leak
-                if hasattr(track, 'task') and track.task:
+                if hasattr(track, "task") and track.task:
                     track.task.cancel()
                     try:
                         await track.task
@@ -582,7 +589,7 @@ class WebRTCService:
                 if session_id not in _CLEANUP_SCHEDULED:
                     _CLEANUP_SCHEDULED.add(session_id)
                     asyncio.create_task(self._cleanup(session_id))
-                
+
     async def handle_offer(self, sdp: str, type: str):
 
         config = RTCConfiguration(
@@ -598,7 +605,7 @@ class WebRTCService:
                 ),
             ]
         )
-   
+
         session_id = generate_session_id()
         self.face_analyzers[session_id] = FaceAnalyzer()
         pc = RTCPeerConnection(configuration=config)
@@ -610,14 +617,16 @@ class WebRTCService:
 
         offer = RTCSessionDescription(sdp=sdp, type=type)
         await pc.setRemoteDescription(offer)
-        
+
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        
+
         while pc.iceGatheringState != "complete":
             await asyncio.sleep(0.1)
 
-        logger.debug(f"[WebRTC] Offer handled | session_id={session_id} connection_state={pc.connectionState} ice_gathering_state={pc.iceGatheringState}") 
+        logger.debug(
+            f"[WebRTC] Offer handled | session_id={session_id} connection_state={pc.connectionState} ice_gathering_state={pc.iceGatheringState}"
+        )
 
         return {
             "sdp": pc.localDescription.sdp,
@@ -641,7 +650,9 @@ class WebRTCService:
                 if inspect.isawaitable(cleanup_result):
                     await cleanup_result
             except Exception as e:
-                logger.error(f"[DetectionChannel] Cleanup failed | session_id={session_id} | error={e}")
+                logger.error(
+                    f"[DetectionChannel] Cleanup failed | session_id={session_id} | error={e}"
+                )
 
         if pc:
             await pc.close()

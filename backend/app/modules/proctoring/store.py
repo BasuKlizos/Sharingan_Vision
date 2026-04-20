@@ -59,11 +59,25 @@ class ProctoringRedisStore:
                 for item in items:
                     summary_key = self._metrics_summary_key(item.session_id)
                     pipe.hincrby(summary_key, "summary.total_samples", 1)
-                    pipe.hincrby(summary_key, "summary.suspicious_samples", int(bool(item.suspicious)))
-                    pipe.hincrby(summary_key, "summary.face_detected_samples", int(bool(item.face_detected)))
-                    pipe.hincrby(summary_key, "summary.no_face_samples", int(not bool(item.face_detected)))
-                    pipe.hincrby(summary_key, "summary.phone_detected_samples", int(bool(item.phone_detected)))
-                    pipe.hincrby(summary_key, "summary.other_device_detected_samples", int(bool(item.other_device_detected)))
+                    pipe.hincrby(
+                        summary_key, "summary.suspicious_samples", int(bool(item.suspicious))
+                    )
+                    pipe.hincrby(
+                        summary_key, "summary.face_detected_samples", int(bool(item.face_detected))
+                    )
+                    pipe.hincrby(
+                        summary_key, "summary.no_face_samples", int(not bool(item.face_detected))
+                    )
+                    pipe.hincrby(
+                        summary_key,
+                        "summary.phone_detected_samples",
+                        int(bool(item.phone_detected)),
+                    )
+                    pipe.hincrby(
+                        summary_key,
+                        "summary.other_device_detected_samples",
+                        int(bool(item.other_device_detected)),
+                    )
                     pipe.hincrby(
                         summary_key,
                         "summary.unauthorized_materials_detected_samples",
@@ -74,8 +88,14 @@ class ProctoringRedisStore:
                         "summary.multiple_persons_detected_samples",
                         int(bool(item.multiple_persons_detected)),
                     )
-                    pipe.hincrby(summary_key, "summary.rapid_hand_movement_samples", int(bool(item.rapid_hand_movement)))
-                    pipe.hincrbyfloat(summary_key, "summary.cumulative_risk_score", float(item.risk_score))
+                    pipe.hincrby(
+                        summary_key,
+                        "summary.rapid_hand_movement_samples",
+                        int(bool(item.rapid_hand_movement)),
+                    )
+                    pipe.hincrbyfloat(
+                        summary_key, "summary.cumulative_risk_score", float(item.risk_score)
+                    )
                     pipe.hincrby(summary_key, "summary.cumulative_face_count", int(item.face_count))
                     pipe.hset(
                         summary_key,
@@ -135,7 +155,9 @@ class ProctoringRedisStore:
                     pipe.lpush(alerts_key, json.dumps(event, default=str))
                     pipe.ltrim(alerts_key, 0, cache_limit - 1)
                     pipe.hincrby(meta_key, "total_alert_count", int(item.occurrence_count))
-                    pipe.hincrby(meta_key, f"alert_type_count:{item.rule_id}", int(item.occurrence_count))
+                    pipe.hincrby(
+                        meta_key, f"alert_type_count:{item.rule_id}", int(item.occurrence_count)
+                    )
                     pipe.hset(
                         meta_key,
                         mapping={
@@ -153,7 +175,6 @@ class ProctoringRedisStore:
         except Exception as exc:
             logger.warning("[ProctorStoreRedis] Failed to append alerts | error=%r", exc)
             return False
-
 
 
 class ProctoringMongoStore:
@@ -213,22 +234,29 @@ class ProctoringMongoStore:
             operations = []
             for session_id, session_items in grouped.items():
                 write_timestamp = _utc_now()
-                sorted_items = sorted(session_items, key=lambda metric: (metric.timestamp, metric.frame_id))
-                first_item = sorted_items[0]
+                sorted_items = sorted(
+                    session_items, key=lambda metric: (metric.timestamp, metric.frame_id)
+                )
                 last_item = sorted_items[-1]
                 total_samples = len(sorted_items)
                 suspicious_samples = sum(int(bool(item.suspicious)) for item in sorted_items)
                 face_detected_samples = sum(int(bool(item.face_detected)) for item in sorted_items)
                 no_face_samples = total_samples - face_detected_samples
-                phone_detected_samples = sum(int(bool(item.phone_detected)) for item in sorted_items)
-                other_device_detected_samples = sum(int(bool(item.other_device_detected)) for item in sorted_items)
+                phone_detected_samples = sum(
+                    int(bool(item.phone_detected)) for item in sorted_items
+                )
+                other_device_detected_samples = sum(
+                    int(bool(item.other_device_detected)) for item in sorted_items
+                )
                 unauthorized_materials_detected_samples = sum(
                     int(bool(item.unauthorized_materials_detected)) for item in sorted_items
                 )
                 multiple_persons_detected_samples = sum(
                     int(bool(item.multiple_persons_detected)) for item in sorted_items
                 )
-                rapid_hand_movement_samples = sum(int(bool(item.rapid_hand_movement)) for item in sorted_items)
+                rapid_hand_movement_samples = sum(
+                    int(bool(item.rapid_hand_movement)) for item in sorted_items
+                )
                 cumulative_risk_score = sum(float(item.risk_score) for item in sorted_items)
                 cumulative_face_count = sum(int(item.face_count) for item in sorted_items)
                 max_risk_score = max(float(item.risk_score) for item in sorted_items)
@@ -295,7 +323,9 @@ class ProctoringMongoStore:
             operations = []
             for session_id, session_items in grouped.items():
                 write_timestamp = _utc_now()
-                sorted_items = sorted(session_items, key=lambda alert: (alert.last_seen_at, alert.frame_id))
+                sorted_items = sorted(
+                    session_items, key=lambda alert: (alert.last_seen_at, alert.frame_id)
+                )
                 first_item = sorted_items[0]
                 last_item = sorted_items[-1]
                 alerts = []
@@ -320,12 +350,12 @@ class ProctoringMongoStore:
                         }
                     )
                     inc_counts["total_alert_count"] += int(item.occurrence_count)
-                    inc_counts[f"alert_type_counts.{item.rule_id}"] = (
-                        inc_counts.get(f"alert_type_counts.{item.rule_id}", 0) + int(item.occurrence_count)
-                    )
-                    inc_counts[f"alert_summary.by_type.{item.rule_id}"] = (
-                        inc_counts.get(f"alert_summary.by_type.{item.rule_id}", 0) + int(item.occurrence_count)
-                    )
+                    inc_counts[f"alert_type_counts.{item.rule_id}"] = inc_counts.get(
+                        f"alert_type_counts.{item.rule_id}", 0
+                    ) + int(item.occurrence_count)
+                    inc_counts[f"alert_summary.by_type.{item.rule_id}"] = inc_counts.get(
+                        f"alert_summary.by_type.{item.rule_id}", 0
+                    ) + int(item.occurrence_count)
 
                 operations.append(
                     UpdateOne(
@@ -379,6 +409,7 @@ class ProctoringMongoStore:
             logger.error("[ProctorStoreMongo] Failed to append alerts | error=%r", exc)
             return False
 
+
 class ProctoringDualStore:
     """
     Persist to both Redis and MongoDB.
@@ -405,6 +436,7 @@ class ProctoringDualStore:
         if not redis_ok and not mongo_ok:
             logger.error("[ProctorStoreDual] Both backends failed for alerts")
         return redis_ok or mongo_ok
+
 
 @lru_cache(maxsize=1)
 def get_proctoring_store() -> ProctoringStore:

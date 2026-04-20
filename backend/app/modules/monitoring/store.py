@@ -9,7 +9,10 @@ from app.modules.monitoring.schemas import (
     CalibrationData,
     CurrentViewData,
 )
-from app.modules.monitoring.zones import assess_current_view_against_calibration, build_zone_definition
+from app.modules.monitoring.zones import (
+    assess_current_view_against_calibration,
+    build_zone_definition,
+)
 
 
 def utc_now() -> datetime:
@@ -34,7 +37,9 @@ class SessionMonitoringStore:
         self._sessions: Dict[str, SessionMonitoringRecord] = {}
         self._lock = RLock()
 
-    def register_session(self, session_id: str, webrtc_status: str = "connected") -> SessionMonitoringRecord:
+    def register_session(
+        self, session_id: str, webrtc_status: str = "connected"
+    ) -> SessionMonitoringRecord:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
@@ -53,7 +58,9 @@ class SessionMonitoringStore:
         with self._lock:
             return self._sessions.get(session_id)
 
-    def mark_session_status(self, session_id: str, webrtc_status: str) -> Optional[SessionMonitoringRecord]:
+    def mark_session_status(
+        self, session_id: str, webrtc_status: str
+    ) -> Optional[SessionMonitoringRecord]:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
@@ -62,7 +69,9 @@ class SessionMonitoringStore:
             session.webrtc_status = webrtc_status
             return session
 
-    def save_calibration(self, session_id: str, calibration: CalibrationData) -> Optional[SessionMonitoringRecord]:
+    def save_calibration(
+        self, session_id: str, calibration: CalibrationData
+    ) -> Optional[SessionMonitoringRecord]:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:

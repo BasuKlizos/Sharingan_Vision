@@ -70,15 +70,19 @@ class HeadMovementAnalyzer:
         left_iris: Any | None = None,
         right_iris: Any | None = None,
     ) -> HeadMovementResult:
-        head_yaw, head_velocity = self._calculate_head_yaw_and_velocity(left_eye, right_eye, nose_tip)
-        
+        head_yaw, head_velocity = self._calculate_head_yaw_and_velocity(
+            left_eye, right_eye, nose_tip
+        )
+
         alerts: list[str] = []
         head_turning = self._update_turning_state_and_check_alerts(head_yaw, alerts)
-        
+
         eye_mid = self._calculate_eye_mid_and_check_static_pose(left_eye, right_eye, alerts)
-        
-        self._check_eye_direction_alerts(left_eye, right_eye, left_iris, right_iris, head_yaw, alerts)
-        
+
+        self._check_eye_direction_alerts(
+            left_eye, right_eye, left_iris, right_iris, head_yaw, alerts
+        )
+
         self.prev_head_yaw = head_yaw
         self.prev_eye_mid = eye_mid
 
@@ -110,15 +114,15 @@ class HeadMovementAnalyzer:
     ) -> tuple[float, float]:
         eye_mid_x = (left_eye.x + right_eye.x) / 2.0
         eye_distance = max(abs(right_eye.x - left_eye.x), 1e-6)
-        
+
         # Positive yaw means face turned to subject's right.
         head_yaw = float((nose_tip.x - eye_mid_x) / eye_distance)
-        
+
         if self.prev_head_yaw is None:
             head_velocity = 0.0
         else:
             head_velocity = float(abs(head_yaw - self.prev_head_yaw))
-        
+
         return head_yaw, head_velocity
 
     def _update_turning_state_and_check_alerts(self, head_yaw: float, alerts: list[str]) -> bool:
@@ -147,7 +151,10 @@ class HeadMovementAnalyzer:
         if movement_count >= self.cheating_movement_threshold:
             alerts.append("CHEATING_DETECTED")
 
-        if self.prev_head_yaw is not None and abs(head_yaw - self.prev_head_yaw) >= self.jerk_delta_threshold:
+        if (
+            self.prev_head_yaw is not None
+            and abs(head_yaw - self.prev_head_yaw) >= self.jerk_delta_threshold
+        ):
             alerts.append("HEAD_SUDDEN_JERK")
 
         return head_turning
@@ -158,7 +165,7 @@ class HeadMovementAnalyzer:
         eye_mid_x = (left_eye.x + right_eye.x) / 2.0
         eye_mid_y = (left_eye.y + right_eye.y) / 2.0
         eye_mid = (float(eye_mid_x), float(eye_mid_y))
-        
+
         if self.prev_eye_mid is None:
             motion = 0.0
         else:
@@ -174,17 +181,23 @@ class HeadMovementAnalyzer:
 
         if self.static_counter >= self.static_hold_frames:
             alerts.append("HEAD_STATIC_POSE")
-        
+
         return eye_mid
 
     def _check_eye_direction_alerts(
-        self, left_eye: Any, right_eye: Any, left_iris: Any | None, 
-        right_iris: Any | None, head_yaw: float, alerts: list[str]
+        self,
+        left_eye: Any,
+        right_eye: Any,
+        left_iris: Any | None,
+        right_iris: Any | None,
+        head_yaw: float,
+        alerts: list[str],
     ) -> None:
         eye_direction = self._estimate_eye_direction(left_eye, right_eye, left_iris, right_iris)
         eye_head_mismatch = self._is_eye_head_mismatch(head_yaw, eye_direction)
         if eye_head_mismatch:
             alerts.append("HEAD_EYE_DIRECTION_MISMATCH")
+
     def _estimate_eye_direction(
         self,
         left_eye: Any,

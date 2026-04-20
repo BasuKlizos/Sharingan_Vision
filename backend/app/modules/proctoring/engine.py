@@ -54,7 +54,9 @@ class ProctoringEngine:
         values = extra.get(key) or []
         return [str(value) for value in values]
 
-    def _activate_if_true(self, rule_id: str, condition: bool, now: float) -> Optional[_ActiveRuleState]:
+    def _activate_if_true(
+        self, rule_id: str, condition: bool, now: float
+    ) -> Optional[_ActiveRuleState]:
         if condition:
             existing = self._active.get(rule_id)
             if existing is None:
@@ -134,7 +136,9 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_person_present_no_face(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_person_present_no_face(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         raw_alerts = {value.upper() for value in self._extra_list(inputs, "raw_alerts")}
         state = self._activate_if_true(
             "PERSON_PRESENT_NO_FACE",
@@ -187,12 +191,18 @@ class ProctoringEngine:
                 last_seen_at=state.last_seen_at,
                 evidence={
                     "phone_confidence": round(float(inputs.phone_confidence), 3),
-                    "labels": [label for label in self._extra_list(inputs, "labels") if label in {"cell phone", "phone"}],
+                    "labels": [
+                        label
+                        for label in self._extra_list(inputs, "labels")
+                        if label in {"cell phone", "phone"}
+                    ],
                 },
             ),
         )
 
-    def _rule_external_device_detected(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_external_device_detected(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         state = self._activate_if_true(
             "EXTERNAL_DEVICE_DETECTED",
             inputs.other_device_detected,
@@ -224,7 +234,9 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_unauthorized_materials(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_unauthorized_materials(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         state = self._activate_if_true(
             "UNAUTHORIZED_MATERIALS",
             inputs.unauthorized_materials_detected,
@@ -253,7 +265,9 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_excessive_head_movement(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_excessive_head_movement(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         yaw_threshold = float(settings.PROCTOR_HEAD_YAW_THRESHOLD)
         state = self._activate_if_true(
             "EXCESSIVE_HEAD_MOVEMENT",
@@ -318,7 +332,9 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_suspicious_hand_movement(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_suspicious_hand_movement(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         hands_hidden = inputs.hands_visible_count is not None and inputs.hands_visible_count <= 0
         state = self._activate_if_true(
             "SUSPICIOUS_HAND_MOVEMENT",
@@ -380,7 +396,9 @@ class ProctoringEngine:
             ),
         )
 
-    def _rule_repeated_eye_closure(self, inputs: ProctoringInputs, now: float) -> list[ProctoringAlert]:
+    def _rule_repeated_eye_closure(
+        self, inputs: ProctoringInputs, now: float
+    ) -> list[ProctoringAlert]:
         left_closed = bool(inputs.left_eye_closed)
         right_closed = bool(inputs.right_eye_closed)
         closure_detected = left_closed and right_closed
@@ -391,9 +409,10 @@ class ProctoringEngine:
             self._activate_if_true("REPEATED_EYE_CLOSURE", False, now)
             return []
 
-        if self._eye_closure_repeat_window_started_at <= 0 or (
-            now - self._eye_closure_repeat_window_started_at
-        ) > window_s:
+        if (
+            self._eye_closure_repeat_window_started_at <= 0
+            or (now - self._eye_closure_repeat_window_started_at) > window_s
+        ):
             self._eye_closure_repeat_window_started_at = now
             self._eye_closure_repeats = 0
 

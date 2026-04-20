@@ -12,16 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-
-HEALTH_FILE = Path(
-    os.environ.get(
-        "AI_CAMERA_MONITOR_HEALTH_FILE",
-        "/tmp/health.json"
-    )
-)
+HEALTH_FILE = Path(os.environ.get("AI_CAMERA_MONITOR_HEALTH_FILE", "/tmp/health.json"))
 
 
 # File Handling
+
 
 def read_health() -> Optional[Dict[str, Any]]:
     if not HEALTH_FILE.exists():
@@ -36,8 +31,8 @@ def read_health() -> Optional[Dict[str, Any]]:
         return None
 
 
-
 # Validation / Processing
+
 
 def evaluate_health(health: Dict[str, Any], max_stale: int) -> Dict[str, Any]:
     health = health.copy()
@@ -47,9 +42,7 @@ def evaluate_health(health: Dict[str, Any], max_stale: int) -> Dict[str, Any]:
 
     if last_success:
         try:
-            success_time = datetime.fromisoformat(
-                last_success.replace("Z", "+00:00")
-            )
+            success_time = datetime.fromisoformat(last_success.replace("Z", "+00:00"))
             age = (datetime.now(timezone.utc) - success_time).total_seconds()
 
             if age > max_stale:
@@ -69,8 +62,8 @@ def evaluate_health(health: Dict[str, Any], max_stale: int) -> Dict[str, Any]:
     return health
 
 
-
 # Formatting
+
 
 def format_health(health: Dict[str, Any]) -> str:
     lines = [
@@ -86,20 +79,16 @@ def format_health(health: Dict[str, Any]) -> str:
     ]
 
     if health.get("last_error"):
-        lines.append(
-            f"Last Error: {health.get('last_error')} ({health.get('last_error_at')})"
-        )
+        lines.append(f"Last Error: {health.get('last_error')} ({health.get('last_error_at')})")
 
     if health.get("stale"):
-        lines.append(
-            f"WARNING: Service is stale (>{health.get('stale_seconds', 0)}s)"
-        )
-        
+        lines.append(f"WARNING: Service is stale (>{health.get('stale_seconds', 0)}s)")
+
     return "\n".join(lines)
 
 
-
 # CLI Logic
+
 
 def run_once(args) -> int:
     health = read_health()
@@ -136,7 +125,7 @@ def main():
     if args.watch:
         try:
             while True:
-                exit_code = run_once(args)
+                run_once(args)
                 print("\n" + "=" * 50 + "\n")
                 time.sleep(5)
         except KeyboardInterrupt:
